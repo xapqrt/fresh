@@ -9,6 +9,9 @@ function applySwitches(settings) {
     app.commandLine.appendSwitch("disable-gpu-vsync");
   }
 
+  // ANGLE Metal backend — native arm64 draw calls
+  app.commandLine.appendSwitch("use-angle", "metal");
+
   // Force GPU rendering everywhere
   app.commandLine.appendSwitch("ignore-gpu-blacklist");
   app.commandLine.appendSwitch("enable-gpu-rasterization");
@@ -19,6 +22,7 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
   app.commandLine.appendSwitch("enable-webgl-draft-extensions");
 
+  app.commandLine.appendSwitch("enable-webgl");
   // Remove throttling
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
@@ -31,11 +35,8 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("disable-breakpad");
   app.commandLine.appendSwitch("disable-crash-reporter");
 
-  // Ensure WebGL is active
-  app.commandLine.appendSwitch("enable-webgl");
-
-  // V8 flags: big heap, expose gc, less idle gc, bigger semispace
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=12288 --expose-gc --nouse-idle-notification --max-semi-space-size=512");
+  // V8 — big heap, less idle GC, moderate semi-space
+  app.commandLine.appendSwitch("js-flags", "--expose-gc --nouse-idle-notification --max-semi-space-size=512 --max-old-space-size=12288");
 
   // Kill all non-essential browser features
   app.commandLine.appendSwitch("disable-logging");
