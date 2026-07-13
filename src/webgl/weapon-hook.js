@@ -1,14 +1,15 @@
 const { isArmSig, getArmType, TOMAHAWK_SIG } = require('./arm-sigs');
-const { applyZSpin, applyXSpin, applyYSpin, packMatrixSig, hsvToRgb } = require('./mat-utils');
+const { applyZSpin, applyXSpin, applyYSpin, hsvToRgb } = require('./mat-utils');
 
 const _matBuf = new Float32Array(16);
 const _rgbPixel = new Uint8Array(4);
-const _BLOOM_SIZE = 128;
-const _BLOOM_MASK = _BLOOM_SIZE - 1;
-const _bloom = new Uint32Array(_BLOOM_SIZE);
 
 let _lastDrawCall = -1;
 let _drawCallCount = 0;
+
+const _BLOOM_SIZE = 128;
+const _BLOOM_MASK = _BLOOM_SIZE - 1;
+const _bloom = new Uint32Array(_BLOOM_SIZE);
 
 const _resetBloom = () => {
   for (let i = 0; i < _BLOOM_SIZE; i++) _bloom[i] = 0;
@@ -43,8 +44,9 @@ const _DEFAULT_ARM = { size: 1, offsetX: 0, offsetY: 0, offsetZ: 0, wireframe: f
 
 let _hooked = false;
 let _lastClearMask = 0;
-let _activeThisFrame = false;
 let _lastBoundTexture = null;
+const _lastRgbUpload = new Uint8Array(4);
+let _rgbFrameCount = 0;
 
 let _inspectStart = null;
 let _inspectingWeaponId = null;
@@ -56,6 +58,7 @@ let _enableMods = false;
 
 let _inspectFns = null;
 let _armFns = null;
+let _fastPath = true;
 
 const setInspectKeybind = (key) => { _inspectKeybind = key; };
 const getInspectKeybind = () => _inspectKeybind;
@@ -67,7 +70,8 @@ const setWeaponConfig = (config, inspectFns, armFns) => {
   _weaponConfig = config;
   _inspectFns = inspectFns;
   _armFns = armFns;
-  _enableMods = !!(config && (config.wireframe || config.colorEnabled || config.rgb || config.universal || config.getSettings));
+  _enableMods = !!(config && (config.wireframe || config.colorEnabled || config.rgb || config.universal));
+  _fastPath = !_enableMods && window.__weaponModsActive !== false;
 };
 
 const _getCfg = (wid) => _weaponConfig?.getSettings?.(wid) || _DEFAULT_CFG;
@@ -118,9 +122,11 @@ const hookWebGL = () => {
     const origUniform4 = gl.uniformMatrix4fv.bind(gl);
 
     gl.uniformMatrix4fv = (location, transpose, data, srcOffset, srcLength) => {
-      _activeThisFrame = false;
+      if (_fastPath) {
+        return origUniform4(location, transpose, data, srcOffset, srcLength);
+      }
 
-      if (!_enableMods || !data || data.length < 16) {
+      if (!_enableMods || window.__weaponModsActive === false || !data || data.length < 16) {
         return origUniform4(location, transpose, data, srcOffset, srcLength);
       }
 
@@ -148,7 +154,11 @@ const hookWebGL = () => {
       _matBuf[8] = d8; _matBuf[9] = d9; _matBuf[10] = d10; _matBuf[11] = d11;
       _matBuf[12] = d12; _matBuf[13] = d13; _matBuf[14] = d14; _matBuf[15] = d15;
 
-      const sig = packMatrixSig(_matBuf);
+      const s0 = Math.round(Math.sqrt(_matBuf[0] * _matBuf[0] + _matBuf[1] * _matBuf[1] + _matBuf[2] * _matBuf[2]) * 100);
+      const s1 = Math.round(Math.sqrt(_matBuf[4] * _matBuf[4] + _matBuf[5] * _matBuf[5] + _matBuf[6] * _matBuf[6]) * 100);
+      const s2 = Math.round(Math.sqrt(_matBuf[8] * _matBuf[8] + _matBuf[9] * _matBuf[9] + _matBuf[10] * _matBuf[10]) * 100);
+      const sig = (s0 << 20) | (s1 << 10) | s2;
+
       const treatAsArm = sig === TOMAHAWK_SIG ? (++_tomahawkCount > 1) : isArmSig(sig);
 
       if (_lastClearMask !== 256) {
@@ -171,15 +181,29 @@ const hookWebGL = () => {
         const wc = _weaponConfig;
 
         if (wc.colorEnabled) {
+          origBindTexture(gl.TEXTURE_2D, rgbTexture);
           if (wc.rgb) {
             const buf = hsvToRgb((performance.now() / 3000) * 360);
             _rgbPixel[0] = buf[0]; _rgbPixel[1] = buf[1]; _rgbPixel[2] = buf[2]; _rgbPixel[3] = 255;
-            origBindTexture(gl.TEXTURE_2D, rgbTexture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
+            if (_rgbFrameCount++ % 3 === 0 ||
+                _rgbPixel[0] !== _lastRgbUpload[0] ||
+                _rgbPixel[1] !== _lastRgbUpload[1] ||
+                _rgbPixel[2] !== _lastRgbUpload[2]) {
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
+              _lastRgbUpload[0] = _rgbPixel[0];
+              _lastRgbUpload[1] = _rgbPixel[1];
+              _lastRgbUpload[2] = _rgbPixel[2];
+            }
           } else {
-            origBindTexture(gl.TEXTURE_2D, rgbTexture);
             _parseHex(wc.colorHex, _rgbPixel);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
+            if (_rgbPixel[0] !== _lastRgbUpload[0] ||
+                _rgbPixel[1] !== _lastRgbUpload[1] ||
+                _rgbPixel[2] !== _lastRgbUpload[2]) {
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
+              _lastRgbUpload[0] = _rgbPixel[0];
+              _lastRgbUpload[1] = _rgbPixel[1];
+              _lastRgbUpload[2] = _rgbPixel[2];
+            }
           }
         } else if (_lastBoundTexture) {
           origBindTexture(gl.TEXTURE_2D, _lastBoundTexture);
@@ -221,8 +245,6 @@ const hookWebGL = () => {
         if (spinX) applyXSpin(_matBuf, spinX);
         if (spinY) applyYSpin(_matBuf, spinY);
 
-        if (wc.wireframe) _activeThisFrame = true;
-
         return origUniform4(location, transpose, _matBuf, 0, 16);
       }
 
@@ -260,39 +282,18 @@ const hookWebGL = () => {
       if (armSpinY) applyYSpin(_matBuf, armSpinY);
       if (armSpinZ) applyZSpin(_matBuf, armSpinZ);
 
-      if (armCfg.colorEnabled) {
-        if (armCfg.rgb) {
-          const buf = hsvToRgb((performance.now() / 3000) * 360);
-          _rgbPixel[0] = buf[0]; _rgbPixel[1] = buf[1]; _rgbPixel[2] = buf[2]; _rgbPixel[3] = 255;
-          origBindTexture(gl.TEXTURE_2D, rgbTexture);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
-        } else {
-          origBindTexture(gl.TEXTURE_2D, rgbTexture);
-          _parseHex(armCfg.colorHex || '#FFFFFF', _rgbPixel);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
-        }
-      } else if (_lastBoundTexture) {
-        origBindTexture(gl.TEXTURE_2D, _lastBoundTexture);
-      }
-
-      if (armCfg.wireframe) _activeThisFrame = true;
-
       return origUniform4(location, transpose, _matBuf, 0, 16);
     };
 
     const origDrawArrays = gl.drawArrays.bind(gl);
     gl.drawArrays = (mode, first, count) => {
       _drawCallCount++;
-      if (_activeThisFrame && (mode === 4 || mode === 6 || mode === 5)) mode = 1;
-      _activeThisFrame = false;
       return origDrawArrays(mode, first, count);
     };
 
     const origDrawElements = gl.drawElements.bind(gl);
     gl.drawElements = (mode, count, type, offset) => {
       _drawCallCount++;
-      if (_activeThisFrame && (mode === 4 || mode === 6 || mode === 5)) mode = 1;
-      _activeThisFrame = false;
       return origDrawElements(mode, count, type, offset);
     };
 

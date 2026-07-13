@@ -2,7 +2,6 @@ const { BrowserWindow, ipcMain, app, shell, clipboard, dialog, net, session, pro
 const { default_settings, allowed_urls } = require("../util/defaults.json");
 const { initResourceSwapper } = require('../addons/swapper.js');
 const { registerShortcuts } = require("../util/shortcuts");
-const { applySwitches } = require("../util/switches");
 const { nativeImage } = require('electron');
 const DiscordRPC = require("../addons/rpc");
 const path = require("path");
@@ -15,17 +14,16 @@ let ffmpegPath = require("ffmpeg-static");
 
 const fetchText = (url) => new Promise((resolve, reject) => {
   https.get(url, (res) => {
-    let data = '';
-    res.on('data', chunk => data += chunk);
-    res.on('end', () => resolve(data));
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      reject(new Error(`fetchText: ${url} returned ${res.statusCode}`));
+      return;
+    }
+    const chunks = [];
+    res.on('data', chunk => chunks.push(chunk));
+    res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
     res.on('error', reject);
   }).on('error', reject);
 });
-
-protocol.registerSchemesAsPrivileged([
-  { scheme: 'https', privileges: { bypassCSP: true, secure: true, supportFetchAPI: true } },
-  { scheme: 'dawn-patch', privileges: { bypassCSP: true, secure: true, supportFetchAPI: true } }
-]);
 
 const store = new Store();
 if (!store.has("settings")) {
@@ -157,9 +155,16 @@ function copyRecursiveSync(src, dest) {
   }
 }
 
-fs.watch(galleryFolder, (eventType, filename) => {
-  if (filename) BrowserWindow.getAllWindows().forEach(win => win.webContents.send("gallery-updated"));
+let _galleryDebounce = null;
+const _galleryWatcher = fs.watch(galleryFolder, (eventType, filename) => {
+  if (!filename) return;
+  if (_galleryDebounce) clearTimeout(_galleryDebounce);
+  _galleryDebounce = setTimeout(() => {
+    _galleryDebounce = null;
+    BrowserWindow.getAllWindows().forEach(win => win.webContents.send("gallery-updated"));
+  }, 200);
 });
+_galleryWatcher.on('error', (err) => console.error('gallery watcher error:', err));
 
 ipcMain.on("open-category-folder", (event, folderPath) => {
   try {
@@ -341,8 +346,6 @@ ipcMain.on("save-sound", (event, soundname, filePath, volume) => {
     gameWindow.loadURL(url);
   });
 
-applySwitches(settings);
-
 let gameWindow = null;
 
 const createWindow = () => {
@@ -361,8 +364,8 @@ const createWindow = () => {
       sandbox: false,
       webSecurity: false,
       backgroundThrottling: false,
-      v8CacheOptions: 'none',
-      disableBlinkFeatures: 'SmoothScrolling,TouchEvent,Vibration,WebShare,WebBluetooth,WebUSB,WebMIDI,Presentation,Notifications',
+      v8CacheOptions: 'bypassHeatCheckAndEagerCompile',
+      disableBlinkFeatures: 'SmoothScrolling,TouchEvent,Vibration,WebShare,WebBluetooth,WebUSB,WebMIDI,Presentation,Notifications,CSSAnimationWorklet,ScrollTimeline,SharedWorker,FontSrcLocal,WebAppBanner,InfiniteScroll,IdleDetection,Serial,WebNFC,WebHID,WakeLock,FileSystemAccess',
       preload: path.join(__dirname, "../preload/game.js"),
     },
   });
@@ -377,11 +380,9 @@ const createWindow = () => {
     `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.96 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`
   );
 
-  gameWindow.webContents.setFrameRate(-1);
-
   let _menuOpen = false;
   ipcMain.on("menu-state", (_, open) => { _menuOpen = open; });
-  ipcMain.on("match-state", (_, inMatch) => { if (gameWindow) gameWindow.webContents.setFrameRate(-1); });
+  ipcMain.on("match-state", (_, inMatch) => { });
 
   const scriptsPath = path.join(
     app.getPath("documents"),
@@ -471,6 +472,9 @@ const initGame = () => {
       }
       code += `\n//# sourceURL=${targetScriptUrl}`;
       callback({ mimeType: 'text/javascript', data: Buffer.from(code) });
+    }).catch((err) => {
+      console.error('dawn-patch fetch failed:', err);
+      callback({ statusCode: 500 });
     });
   });
 

@@ -1,19 +1,51 @@
 const { app } = require("electron");
 
 function applySwitches(settings) {
-  if (settings.unlimited_fps) {
+  const fpsCap = settings.fps_cap ?? 0;
+  if (fpsCap > 0) {
+    app.commandLine.appendSwitch("frame-rate-limit", String(fpsCap));
+  } else {
     app.commandLine.appendSwitch("disable-frame-rate-limit");
     app.commandLine.appendSwitch("disable-gpu-vsync");
   }
-  if (settings.in_process_gpu) {
-    app.commandLine.appendSwitch("in-process-gpu");
-  }
 
-  app.commandLine.appendSwitch("high-dpi-support", "1");
+  // Force GPU rendering everywhere
   app.commandLine.appendSwitch("ignore-gpu-blacklist");
   app.commandLine.appendSwitch("enable-gpu-rasterization");
-  app.commandLine.appendSwitch("enable-zero-copy");
-  app.commandLine.appendSwitch("num-raster-threads", String(settings.num_raster_threads || 4));
+  app.commandLine.appendSwitch("force-gpu-rasterization");
+  app.commandLine.appendSwitch("enable-oop-rasterization");
+  app.commandLine.appendSwitch("enable-accelerated-2d-canvas");
+  app.commandLine.appendSwitch("num-raster-threads", "4");
+  app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
+  app.commandLine.appendSwitch("enable-webgl-draft-extensions");
+
+  // Remove throttling
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+
+  // Remove safety overhead
+  app.commandLine.appendSwitch("no-sandbox");
+  app.commandLine.appendSwitch("disable-software-rasterizer");
+  app.commandLine.appendSwitch("disable-gpu-driver-bug-workarounds");
+  app.commandLine.appendSwitch("disable-breakpad");
+  app.commandLine.appendSwitch("disable-crash-reporter");
+
+  // Ensure WebGL is active
+  app.commandLine.appendSwitch("enable-webgl");
+
+  // V8 flags: big heap, expose gc, less idle gc, bigger semispace
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=12288 --expose-gc --nouse-idle-notification --max-semi-space-size=512");
+
+  // Kill all non-essential browser features
+  app.commandLine.appendSwitch("disable-logging");
+  app.commandLine.appendSwitch("disable-smooth-scrolling");
+  app.commandLine.appendSwitch("force-device-scale-factor", "1");
+  app.commandLine.appendSwitch("disable-features", "Autofill,TranslateUI,MediaRouter,PasswordManager,SignInPromo,ChromeWhatsNewUI,NetworkTimeService");
+
+  // Remove IPC overhead
+  app.commandLine.appendSwitch("disable-ipc-flooding-protection");
+
   app.allowRendererProcessReuse = true;
 }
 

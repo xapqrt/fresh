@@ -7,8 +7,8 @@ function installBhopHook() {
   var _lastToggle = 0;
   var _phase = 0;
 
-  var DOWN_MS = 5;
-  var UP_MS = 5;
+  var DOWN_MS = 4;
+  var UP_MS = 3;
 
   var _qDownEvt = new KeyboardEvent("keydown", {
     key: "q", code: "KeyQ", keyCode: 81, which: 81,

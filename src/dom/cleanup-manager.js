@@ -3,8 +3,6 @@ const _intervals = [];
 const _timeouts = [];
 const _observers = [];
 
-let _cleaned = false;
-
 const add = (fn) => {
   if (typeof fn === 'function') {
     _cleanupFns.push(fn);
@@ -28,9 +26,6 @@ const addObserver = (obs) => {
 };
 
 const cleanup = () => {
-  if (_cleaned) return;
-  _cleaned = true;
-
   for (let i = _intervals.length - 1; i >= 0; i--) {
     clearInterval(_intervals[i]);
   }
@@ -51,7 +46,6 @@ const cleanup = () => {
 };
 
 const reset = () => {
-  _cleaned = false;
   _intervals.length = 0;
   _timeouts.length = 0;
   _observers.length = 0;

@@ -1,4 +1,3 @@
-const SCALE = 100;
 const _cos = new Float64Array(1);
 const _sin = new Float64Array(1);
 
@@ -41,16 +40,6 @@ const applyYSpin = (mat, angle) => {
   mat[8] = nz0 * sz; mat[9] = nz1 * sz; mat[10] = nz2 * sz;
 };
 
-const colMag = (m, i) =>
-  Math.sqrt(m[i] * m[i] + m[i + 1] * m[i + 1] + m[i + 2] * m[i + 2]);
-
-const packMatrixSig = (m) => {
-  const s0 = Math.round(colMag(m, 0) * SCALE);
-  const s1 = Math.round(colMag(m, 4) * SCALE);
-  const s2 = Math.round(colMag(m, 8) * SCALE);
-  return (s0 << 20) | (s1 << 10) | s2;
-};
-
 const _hsvBuf = new Uint8Array(3);
 const hsvToRgb = (hue) => {
   hue = ((hue % 360) + 360) % 360;
@@ -69,4 +58,4 @@ const hsvToRgb = (hue) => {
   return _hsvBuf;
 };
 
-module.exports = { applyZSpin, applyXSpin, applyYSpin, colMag, packMatrixSig, hsvToRgb };
+module.exports = { applyZSpin, applyXSpin, applyYSpin, hsvToRgb };
