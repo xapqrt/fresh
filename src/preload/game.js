@@ -31,6 +31,7 @@ if (!window.location.href.startsWith(base_url)) {
 }
 
 const runGC = () => { if (typeof gc === "function") gc(); };
+let _gcTimer = null;
 let _previousUrl;
 
 const { installBhopHook } = require('./game/bhop');
@@ -170,7 +171,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       setAdsPower(settings.ads_power);
     }
 
-    if (_previousUrl && (_previousUrl.startsWith(`${base_url}games`) || _previousUrl.startsWith(`${base_url}hub/ranked`)) && !url.startsWith(`${base_url}games`) && !url.startsWith(`${base_url}hub/ranked`)) {
+    const inGame = url.startsWith(`${base_url}games`) || url.startsWith(`${base_url}hub/ranked`);
+    const wasInGame = _previousUrl && (_previousUrl.startsWith(`${base_url}games`) || _previousUrl.startsWith(`${base_url}hub/ranked`));
+
+    if (inGame && !_gcTimer) {
+      runGC();
+      _gcTimer = setInterval(runGC, 15000);
+    } else if (!inGame && _gcTimer) {
+      clearInterval(_gcTimer);
+      _gcTimer = null;
       runGC();
     }
     _previousUrl = url;

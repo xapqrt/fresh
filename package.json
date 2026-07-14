@@ -5,13 +5,13 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder --x64"
   },
   "keywords": [],
   "author": "zVipexx",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^28.3.3",
+    "electron": "^10.4.7",
     "electron-builder": "^26.0.12"
   },
   "repository": {

@@ -16,7 +16,7 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("ignore-gpu-blacklist");
   app.commandLine.appendSwitch("enable-gpu-rasterization");
   app.commandLine.appendSwitch("force-gpu-rasterization");
-  app.commandLine.appendSwitch("enable-oop-rasterization");
+  // enable-oop-rasterization intentionally omitted — IPC overhead on unified memory
   app.commandLine.appendSwitch("enable-accelerated-2d-canvas");
   app.commandLine.appendSwitch("num-raster-threads", "4");
   app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
@@ -35,8 +35,8 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("disable-breakpad");
   app.commandLine.appendSwitch("disable-crash-reporter");
 
-  // V8 — big heap, less idle GC, moderate semi-space
-  app.commandLine.appendSwitch("js-flags", "--expose-gc --nouse-idle-notification --max-semi-space-size=512 --max-old-space-size=12288");
+  // V8 — let idle GC run, moderate heap to force cleanup before freeze
+  app.commandLine.appendSwitch("js-flags", "--expose-gc --max-semi-space-size=256 --max-old-space-size=2048");
 
   // Kill all non-essential browser features
   app.commandLine.appendSwitch("disable-logging");

@@ -122,9 +122,9 @@ const createWindow = () => {
     `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.96 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`
   );
 
-  gameWindow.webContents.setWindowOpenHandler(({ url }) => {
+  gameWindow.webContents.on("new-window", (e, url) => {
+    e.preventDefault();
     require("electron").shell.openExternal(url);
-    return { action: 'deny' };
   });
 
   gameWindow.webContents.on("did-navigate-in-page", (e, url) => {
