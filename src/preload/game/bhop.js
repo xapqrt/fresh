@@ -3,12 +3,12 @@ function installBhopHook() {
   var _qDown = false;
   var _bhopOn = false;
   var _qDownPhys = false;
-  var _rafId = null;
-  var _lastToggle = 0;
+  var _timeoutId = null;
+  var _tickCount = 0;
   var _phase = 0;
 
-  var DOWN_MS = 4;
-  var UP_MS = 3;
+  var DOWN_TICKS = 1;
+  var UP_TICKS = 1;
 
   var _qDownEvt = new KeyboardEvent("keydown", {
     key: "q", code: "KeyQ", keyCode: 81, which: 81,
@@ -19,7 +19,10 @@ function installBhopHook() {
     bubbles: true, cancelable: true,
   });
 
-  function _postQ(down) { document.dispatchEvent(down ? _qDownEvt : _qUpEvt); }
+  function _postQ(down) {
+    var evt = down ? _qDownEvt : _qUpEvt;
+    document.dispatchEvent(evt);
+  }
 
   function _isInput(el) {
     if (!el) return false;
@@ -28,29 +31,29 @@ function installBhopHook() {
       (el.getAttribute && el.getAttribute("role") === "textbox");
   }
 
-  function _tick(now) {
-    if (!_bhopOn) { _rafId = null; return; }
-    var dt = now - _lastToggle;
-    if (_phase === 1 && dt >= DOWN_MS) {
-      _qDownPhys = false; _postQ(false); _phase = 2; _lastToggle = now;
-    } else if (_phase === 2 && dt >= UP_MS) {
-      _qDownPhys = true; _postQ(true); _phase = 1; _lastToggle = now;
+  function _tick() {
+    if (!_bhopOn) { _timeoutId = null; return; }
+    _tickCount++;
+    if (_phase === 1 && _tickCount >= DOWN_TICKS) {
+      _qDownPhys = false; _postQ(false); _phase = 2; _tickCount = 0;
+    } else if (_phase === 2 && _tickCount >= UP_TICKS) {
+      _qDownPhys = true; _postQ(true); _phase = 1; _tickCount = 0;
     }
-    _rafId = requestAnimationFrame(_tick);
+    _timeoutId = setTimeout(_tick, 0);
   }
 
   function _start() {
     if (_bhopOn) return;
     _bhopOn = true;
-    _lastToggle = performance.now();
+    _tickCount = 0;
     _phase = 1; _qDownPhys = true; _postQ(true);
-    _rafId = requestAnimationFrame(_tick);
+    _timeoutId = setTimeout(_tick, 0);
   }
 
   function _stop() {
     if (!_bhopOn) return;
     _bhopOn = false;
-    if (_rafId !== null) { cancelAnimationFrame(_rafId); _rafId = null; }
+    if (_timeoutId !== null) { clearTimeout(_timeoutId); _timeoutId = null; }
     if (_qDownPhys) { _qDownPhys = false; _postQ(false); }
     _phase = 0;
   }

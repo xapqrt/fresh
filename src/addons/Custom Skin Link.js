@@ -473,41 +473,36 @@ let patchedTextures = new Map();
 
 function getCurrentSkinUrl() {
   if (localStorage.csl_enabled !== "true") return null;
-  let useurl;
-  if (localStorage.csl_url_or_base64 === "true") {
-    useurl = localStorage.csl_colorpicker_inputurl;
-  } else {
-    useurl = localStorage.csl_url;
-  }
-  return useurl || default_url;
+  return (localStorage.csl_url_or_base64 === "true"
+    ? localStorage.csl_colorpicker_inputurl
+    : localStorage.csl_url) || default_url;
 }
 
-Array.isArray = function (...args) {
-  const arg = args[0];
-  if (!arg || !arg.map || !arg.map.image) return oldIsArr.apply(Array, args);
+Array.isArray = function(arg) {
+  if (!arg || !arg.map || !arg.map.image) return oldIsArr.call(Array, arg);
 
-  const texture = arg.map;
-  const image = texture.image;
-  const width = image.width;
-  const height = image.height;
+  const image = arg.map.image;
+  const w = image.width;
+  if (w !== 64 && w !== 42) return oldIsArr.call(Array, arg);
+  const h = image.height;
+  if (h !== 64 && h !== 42 && h !== 32) return oldIsArr.call(Array, arg);
+  if (image.src === muzzleImg || image.src.includes(muzzleImg2)) return oldIsArr.call(Array, arg);
 
   const customSkinLink = getCurrentSkinUrl();
-  const isSkinTexture = (width === 64 || width === 42) &&
-    (height === 64 || height === 42 || height === 32);
   const ingame = !!document.querySelector(".desktop-game-interface");
   const ingameOnly = localStorage.csl_ingame_only !== "false";
   const canSwap = ingameOnly ? ingame : true;
 
-  if (isSkinTexture && image.src !== muzzleImg && !image.src.includes(muzzleImg2)) {
-    if (canSwap && customSkinLink && !patchedTextures.has(texture)) {
-      patchedTextures.set(texture, image.src);
-      image.src = customSkinLink;
-      texture.needsUpdate = true;
-    } else if (!canSwap && patchedTextures.has(texture)) {
-      image.src = patchedTextures.get(texture);
-      patchedTextures.delete(texture);
-      texture.needsUpdate = true;
-    }
+  const texture = arg.map;
+  if (canSwap && customSkinLink && !patchedTextures.has(texture)) {
+    patchedTextures.set(texture, image.src);
+    image.src = customSkinLink;
+    texture.needsUpdate = true;
+  } else if (!canSwap && patchedTextures.has(texture)) {
+    image.src = patchedTextures.get(texture);
+    patchedTextures.delete(texture);
+    texture.needsUpdate = true;
   }
-  return oldIsArr.apply(Array, args);
+
+  return oldIsArr.call(Array, arg);
 }

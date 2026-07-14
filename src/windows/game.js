@@ -1,10 +1,9 @@
 const { BrowserWindow, ipcMain, app, shell, session, protocol } = require("electron");
 const { default_settings, allowed_urls } = require("../util/defaults.json");
 const { initResourceSwapper } = require('../addons/swapper.js');
-const { registerShortcuts, unregisterShortcuts } = require("../util/shortcuts");
 const path = require("path");
 const Store = require("electron-store");
-const fs = require("fs-extra");
+const fs = require("fs");
 const https = require("https");
 
 const fetchText = (url) => new Promise((resolve, reject) => {
@@ -49,19 +48,6 @@ ipcMain.on("get-settings", (e) => {
 ipcMain.on("update-setting", (e, key, value) => {
   settings[key] = value;
   store.set("settings", settings);
-});
-
-const scriptsPath = path.join(
-  app.getPath("documents"),
-  "DawnClient/scripts"
-);
-
-if (!fs.existsSync(scriptsPath)) {
-  fs.mkdirSync(scriptsPath, { recursive: true });
-}
-
-ipcMain.on("get-scripts-path", (e) => {
-  e.returnValue = scriptsPath;
 });
 
 ipcMain.on("navigate", (_, url) => {
@@ -139,12 +125,9 @@ const createWindow = () => {
     gameWindow.show();
   });
 
-  registerShortcuts(gameWindow);
-
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 
   gameWindow.on("closed", () => {
-    unregisterShortcuts();
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
     gameWindow = null;

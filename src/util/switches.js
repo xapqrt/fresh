@@ -35,8 +35,10 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("disable-breakpad");
   app.commandLine.appendSwitch("disable-crash-reporter");
 
-  // V8 — let idle GC run, moderate heap to force cleanup before freeze
-  app.commandLine.appendSwitch("js-flags", "--expose-gc --max-semi-space-size=256 --max-old-space-size=2048");
+  // V8 — small semi-space for quick young-gen GC, concurrent marking + sweeping
+  // max-semi-space-size=128: smaller young gen = faster GC pauses (less frame drop)
+  // max-old-space-size=4096: generous old gen for game heap
+  app.commandLine.appendSwitch("js-flags", "--expose-gc --max-semi-space-size=128 --max-old-space-size=4096 --concurrent_marking --concurrent_sweeping --optimize_for_size");
 
   // Kill all non-essential browser features
   app.commandLine.appendSwitch("disable-logging");

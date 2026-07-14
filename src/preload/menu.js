@@ -2541,7 +2541,7 @@ class Menu {
       highlightSelectedTrade();
     };
 
-    const bodyObserver = new MutationObserver(() => {
+    const bodyCheckInterval = setInterval(() => {
       const chatContainer = document.querySelector(".servers .chat");
 
       if (chatContainer && !chatObserver) {
@@ -2550,12 +2550,7 @@ class Menu {
         chatObserver.disconnect();
         chatObserver = null;
       }
-    });
-
-    bodyObserver.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    }, 500);
 
     document.addEventListener("click", async (e) => {
       if (this.settings.accept_on_click) {
