@@ -1,13 +1,6 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
-const { autoUpdater } = require("electron-updater");
+const { BrowserWindow, ipcMain } = require("electron");
 const { initGame } = require("./game");
 const path = require("path");
-
-autoUpdater.setFeedURL({
-  provider: "github",
-  owner: "zVipexx",
-  repo: "dawn-client",
-});
 
 let splashWindow;
 
@@ -32,39 +25,12 @@ const createWindow = () => {
   splashWindow.once("ready-to-show", () => {
     splashWindow.show();
     splashWindow.webContents.send("splash-ready");
-    app.isPackaged ? checkForUpdates() : handleClose();
+    handleClose();
   });
 
   splashWindow.on("closed", () => {
-    ipcMain.removeAllListeners("quit-and-install");
     splashWindow = null;
   });
-};
-
-ipcMain.on("quit-and-install", () =>
-  autoUpdater.quitAndInstall()
-);
-
-const checkForUpdates = () => {
-  autoUpdater.on("update-available", () =>
-    splashWindow.webContents.send("update-available")
-  );
-  autoUpdater.on("update-not-available", () => {
-    splashWindow.webContents.send("update-not-available");
-    handleClose();
-  });
-  autoUpdater.on("update-downloaded", () => {
-    splashWindow.webContents.send("update-downloaded");
-    console.log("Update downloaded");
-  });
-  autoUpdater.on("download-progress", (progress) =>
-    splashWindow.webContents.send("download-progress", progress)
-  );
-  autoUpdater.on("error", (err) => {
-    splashWindow.webContents.send("update-error", err.message);
-    setTimeout(handleClose, 3000);
-  });
-  autoUpdater.checkForUpdates().catch(handleClose);
 };
 
 const handleClose = () =>

@@ -9,12 +9,16 @@ win:
   icon: "src/assets/img/icon.png"
   artifactName: "${name}-setup-win-${version}.${ext}"
 mac:
-  target: dmg
+  target:
+    - target: dmg
+      arch:
+        - arm64
   icon: "src/assets/img/icon.icns"
-  artifactName: "${name}-setup-mac-${version}.${ext}"
+  artifactName: "${name}-setup-mac-${version}-arm64.${ext}"
   extendInfo:
     LSApplicationCategoryType: "public.app-category.games"
     NSSupportsAutomaticGraphicsSwitching: true
+    NSAppSleepDisabled: true
 linux:
   target:
     - AppImage
@@ -22,8 +26,3 @@ linux:
   category: Game
   icon: "src/assets/img/icon.png"
   artifactName: "${name}-${version}-linux-${arch}.${ext}"
-publish:
-  - provider: github
-    owner: zVipexx
-    repo: dawn-client
-    releaseType: release

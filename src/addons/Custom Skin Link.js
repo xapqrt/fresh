@@ -362,31 +362,31 @@ function startfunction() {
       canvas.width = img.width;
       canvas.height = img.height;
 
+      //canvas draw
       ctx.drawImage(img, 0, 0);
 
-      pixelData.length = 0;
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const pixels = imgData.data;
-      const w = canvas.width;
+      //collects pixel information
+      let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      let pixels = imgData.data;
 
+      //stores pixel in an array of objects [{x, y, r, g, b, a}]
       for (let i = 0; i < pixels.length; i += 4) {
-        pixelData.push({
-          x: (i >> 2) % w,
-          y: (i >> 2) / w | 0,
-          r: pixels[i], g: pixels[i + 1], b: pixels[i + 2], a: pixels[i + 3]
-        });
+        let r = pixels[i];
+        let g = pixels[i + 1];
+        let b = pixels[i + 2];
+        let a = pixels[i + 3];
+
+        //x and y coords
+        let x = (i / 4) % canvas.width;
+        let y = Math.floor(i / 4 / canvas.width);
+
+        //storing
+        pixelData.push({ x, y, r, g, b, a });
       }
 
-      let _texTimer = null;
-      const throttledUpdate = () => {
-        if (_texTimer) return;
-        _texTimer = requestAnimationFrame(() => {
-          _texTimer = null;
-          updateTexture();
-        });
-      };
-      d_colorpicker_head.addEventListener("input", throttledUpdate);
-      d_colorpicker_body.addEventListener("input", throttledUpdate);
+      //event listener
+      d_colorpicker_head.addEventListener("input", updateTexture);
+      d_colorpicker_body.addEventListener("input", updateTexture);
       displayStartingCanvas(img_display);
     };
 
@@ -397,35 +397,59 @@ function startfunction() {
   }
 }
 
+//big chungis function
 function updateTexture() {
   localStorage.csl_body = d_colorpicker_body.value;
   localStorage.csl_head = d_colorpicker_head.value;
-  const canvas = d_canvas_colorpicker;
-  const ctx = canvas.getContext("2d");
-  const headColor = hexToRgb(d_colorpicker_head.value);
-  const bodyColor = hexToRgb(d_colorpicker_body.value);
-  const w = canvas.width;
+  let canvas = d_canvas_colorpicker;
+  let ctx = canvas.getContext("2d");
+  let headColor = hexToRgb(d_colorpicker_head.value);
+  let bodyColor = hexToRgb(d_colorpicker_body.value);
 
-  const imgData = ctx.createImageData(canvas.width, canvas.height);
-  const data = imgData.data;
+  let pixelData2 = [];
 
+  //makes the new pixel objects
   for (let i = 0; i < pixelData.length; i++) {
-    const p = pixelData[i];
-    const idx = (p.y * w + p.x) << 2;
-    if (p.g === 255) {
-      data[idx] = bodyColor.r;
-      data[idx + 1] = bodyColor.g;
-      data[idx + 2] = bodyColor.b;
+    let pixel = {};
+    pixel.a = pixelData[i].a;
+    pixel.x = pixelData[i].x;
+    pixel.y = pixelData[i].y;
+
+    if (pixelData[i].g === 255) {
+      //body color
+      pixel.r = bodyColor.r;
+      pixel.g = bodyColor.g;
+      pixel.b = bodyColor.b;
     } else {
-      data[idx] = headColor.r;
-      data[idx + 1] = headColor.g;
-      data[idx + 2] = headColor.b;
+      //head color
+      pixel.r = headColor.r;
+      pixel.g = headColor.g;
+      pixel.b = headColor.b;
     }
-    data[idx + 3] = p.a;
+    pixelData2.push(pixel);
   }
 
-  ctx.putImageData(imgData, 0, 0);
-  d_colorpicker_output.value = canvas.toDataURL();
+  //data holder for new image data
+  let newImageData = ctx.createImageData(canvas.width, canvas.height);
+
+  for (let i = 0; i < pixelData2.length; i++) {
+    let pixel = pixelData2[i];
+    let index = (pixel.y * canvas.width + pixel.x) * 4;
+
+    //modifies the image with pixel details
+    newImageData.data[index] = pixel.r;
+    newImageData.data[index + 1] = pixel.g;
+    newImageData.data[index + 2] = pixel.b;
+    newImageData.data[index + 3] = pixel.a;
+  }
+
+  //makes the image on the canvas
+  ctx.putImageData(newImageData, 0, 0);
+
+  //output
+  let output = canvas.toDataURL();
+  d_colorpicker_output.value = output;
+  //to ensure that the triggers a change event
   d_colorpicker_output.dispatchEvent(change_event);
 }
 
@@ -442,41 +466,10 @@ function hexToRgb(hex) {
 
 //Skywalks improved version:
 const oldIsArr = Array.isArray;
-Array.isArray = function(arg) {
-  if (!arg || typeof arg !== 'object') return oldIsArr.call(Array, arg);
-  const m = arg.map;
-  if (!m) return oldIsArr.call(Array, arg);
-  const img = m.image;
-  if (!img) return oldIsArr.call(Array, arg);
-  const w = img.width;
-  if (w !== 64 && w !== 42) return oldIsArr.call(Array, arg);
-  const h = img.height;
-  if (h !== 64 && h !== 42 && h !== 32) return oldIsArr.call(Array, arg);
-  const src = img.src;
-  if (src === muzzleImg || src.indexOf(muzzleImg2) !== -1) return oldIsArr.call(Array, arg);
-
-  const now = Date.now();
-  const skinUrl = now - _cachedSkinUrlTime > 5000 ? (_cachedSkinUrl = getCurrentSkinUrl(), _cachedSkinUrlTime = now, _cachedSkinUrl) : _cachedSkinUrl;
-  if (!skinUrl) return oldIsArr.call(Array, arg);
-
-  const ingame = now - _cachedIngameTime > 5000 ? (_cachedIngame = !!document.querySelector(".desktop-game-interface"), _cachedIngameTime = now, _cachedIngame) : _cachedIngame;
-  const ingameOnly = now - _cachedIngameOnlyTime > 5000 ? (_cachedIngameOnly = localStorage.csl_ingame_only !== "false", _cachedIngameOnlyTime = now, _cachedIngameOnly) : _cachedIngameOnly;
-  if (ingameOnly && !ingame) return oldIsArr.call(Array, arg);
-
-  img.src = skinUrl;
-  m.needsUpdate = true;
-  return oldIsArr.call(Array, arg);
-};
-
 const muzzleImg = "https://kirka.io/assets/img/__shooting-fire__.effa20af.png";
 const muzzleImg2 = "shooting-fire";
 
-let _cachedSkinUrl = null;
-let _cachedSkinUrlTime = 0;
-let _cachedIngame = false;
-let _cachedIngameTime = 0;
-let _cachedIngameOnly = true;
-let _cachedIngameOnlyTime = 0;
+let patchedTextures = new Map();
 
 function getCurrentSkinUrl() {
   if (localStorage.csl_enabled !== "true") return null;
@@ -485,3 +478,31 @@ function getCurrentSkinUrl() {
     : localStorage.csl_url) || default_url;
 }
 
+Array.isArray = function(arg) {
+  if (!arg || !arg.map || !arg.map.image) return oldIsArr.call(Array, arg);
+
+  const image = arg.map.image;
+  const w = image.width;
+  if (w !== 64 && w !== 42) return oldIsArr.call(Array, arg);
+  const h = image.height;
+  if (h !== 64 && h !== 42 && h !== 32) return oldIsArr.call(Array, arg);
+  if (image.src === muzzleImg || image.src.includes(muzzleImg2)) return oldIsArr.call(Array, arg);
+
+  const customSkinLink = getCurrentSkinUrl();
+  const ingame = !!document.querySelector(".desktop-game-interface");
+  const ingameOnly = localStorage.csl_ingame_only !== "false";
+  const canSwap = ingameOnly ? ingame : true;
+
+  const texture = arg.map;
+  if (canSwap && customSkinLink && !patchedTextures.has(texture)) {
+    patchedTextures.set(texture, image.src);
+    image.src = customSkinLink;
+    texture.needsUpdate = true;
+  } else if (!canSwap && patchedTextures.has(texture)) {
+    image.src = patchedTextures.get(texture);
+    patchedTextures.delete(texture);
+    texture.needsUpdate = true;
+  }
+
+  return oldIsArr.call(Array, arg);
+}

@@ -5,13 +5,13 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --x64"
+    "build": "npx electron-builder --mac --arm64"
   },
   "keywords": [],
   "author": "zVipexx",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^10.4.7",
+    "electron": "^12.2.3",
     "electron-builder": "^26.0.12"
   },
   "repository": {
@@ -19,8 +19,7 @@
     "url": "https://github.com/zVipexx/dawn-client.git"
   },
   "dependencies": {
-    "electron-store": "^8.2.0",
-    "electron-updater": "^6.2.1"
+    "electron-store": "^8.2.0"
   },
   "optionalDependencies": {
     "dmg-license": "^1.0.11"

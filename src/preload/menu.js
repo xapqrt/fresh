@@ -2510,6 +2510,7 @@ class Menu {
   handleButtons() {
     let selectedTradeId = null;
     let chatObserver = null;
+    let chatContainerObserver = null;
 
     const highlightSelectedTrade = () => {
       if (!selectedTradeId) return;
@@ -2535,13 +2536,21 @@ class Menu {
         subtree: true
       });
 
+      chatObserver = observer;
+
       highlightSelectedTrade();
     };
 
-    const bodyCheckInterval = setInterval(() => {
+    const syncChatObserver = () => {
       if (document.hidden) return;
       const href = window.location.href;
-      if (href.includes('/games/') || href.includes('/hub/ranked')) return;
+      if (href.includes('/games/') || href.includes('/hub/ranked')) {
+        if (chatObserver) {
+          chatObserver.disconnect();
+          chatObserver = null;
+        }
+        return;
+      }
 
       const chatContainer = document.querySelector(".servers .chat");
 
@@ -2551,7 +2560,17 @@ class Menu {
         chatObserver.disconnect();
         chatObserver = null;
       }
-    }, 500);
+    };
+
+    if (!chatContainerObserver) {
+      chatContainerObserver = createThrottledObserver(syncChatObserver);
+      chatContainerObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+    }
+
+    syncChatObserver();
 
     const _clickHandler = async (e) => {
       if (document.hidden) return;

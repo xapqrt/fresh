@@ -20,44 +20,5 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   versionElement.textContent = `v${version}`;
-
-  let progressLine = null;
-
-  const updateStatus = (status) => {
-    const newLine = document.createElement("div");
-    newLine.textContent = status;
-    statusElement.appendChild(newLine);
-  };
-
-  const updateProgress = (status) => {
-    if (!progressLine) {
-      progressLine = document.createElement("div");
-      statusElement.appendChild(progressLine);
-    }
-    progressLine.textContent = status;
-  };
-
-  ipcRenderer.send("check-for-updates");
-  updateStatus("Checking for updates...");
-
-  ipcRenderer.on("update-available", () =>
-    updateStatus("Update available! Downloading...")
-  );
-  ipcRenderer.on("update-not-available", () =>
-    updateStatus("No updates available. Launching...")
-  );
-
-  ipcRenderer.on("update-downloaded", () => {
-    updateStatus("Update downloaded! Installing...");
-    ipcRenderer.send("quit-and-install");
-  });
-
-  ipcRenderer.on("download-progress", (_, progress) =>
-    updateProgress(`Downloading update: ${Math.round(progress.percent)}%`)
-  );
-
-  ipcRenderer.on("update-error", (event, err) => {
-    const message = err?.message || err || "unknown error";
-    updateStatus(`Something went wrong: ${message}. Launching...`);
-  });
+  statusElement.textContent = "Launching...";
 });

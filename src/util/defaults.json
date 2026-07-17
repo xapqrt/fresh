@@ -65,7 +65,7 @@
     "num_raster_threads": 4,
     "performance_mode": true,
     "auto_fullscreen": true,
-    "discord_rpc": true,
+    "discord_rpc": false,
     "css_link": "",
     "css_enabled": false,
     "advanced_css": "",

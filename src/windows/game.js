@@ -45,14 +45,19 @@ ipcMain.on("get-settings", (e) => {
   e.returnValue = settings;
 });
 
+const _writeSettings = () => {
+  const configPath = path.join(app.getPath("userData"), "config.json");
+  fs.writeFile(configPath, JSON.stringify({ settings }), () => {});
+};
+
 let _storeTimer = null;
 ipcMain.on("update-setting", (e, key, value) => {
   settings[key] = value;
   if (_storeTimer) clearTimeout(_storeTimer);
   _storeTimer = setTimeout(() => {
     _storeTimer = null;
-    store.set("settings", settings);
-  }, 150);
+    _writeSettings();
+  }, 1000);
 });
 
 ipcMain.on("navigate", (_, url) => {
@@ -96,10 +101,6 @@ const createWindow = () => {
       webviewTag: true,
       sandbox: false,
       webSecurity: false,
-      backgroundThrottling: false,
-      paintWhenInitiallyHidden: true,
-      v8CacheOptions: 'bypassHeatCheckAndEagerCompile',
-      disableBlinkFeatures: 'SmoothScrolling,TouchEvent,Vibration,WebShare,WebBluetooth,WebUSB,WebMIDI,Presentation,Notifications,CSSAnimationWorklet,ScrollTimeline,SharedWorker,FontSrcLocal,WebAppBanner,InfiniteScroll,IdleDetection,Serial,WebNFC,WebHID,WakeLock,FileSystemAccess',
       preload: path.join(__dirname, "../preload/game.js"),
     },
   });
@@ -111,7 +112,7 @@ const createWindow = () => {
   }
 
   gameWindow.webContents.setUserAgent(
-    `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`
+    `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.296 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`
   );
 
   gameWindow.webContents.on("new-window", (e, url) => {
@@ -130,8 +131,6 @@ const createWindow = () => {
   gameWindow.once("ready-to-show", () => {
     gameWindow.show();
   });
-
-  gameWindow.webContents.setFrameRate(450);
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 

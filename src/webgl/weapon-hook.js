@@ -1,7 +1,8 @@
 const { isArmSig, getArmType, TOMAHAWK_SIG } = require('./arm-sigs');
 const { applyZSpin, applyXSpin, applyYSpin, hsvToRgb } = require('./mat-utils');
+const wasm = require('../wasm/dawn_wasm');
 
-const _matBuf = new Float32Array(16);
+const _matBuf = wasm.getScratchBuf();
 const _rgbPixel = new Uint8Array(4);
 
 let _lastDrawCall = -1;
@@ -27,21 +28,7 @@ const _bloomCheck = (hash) => {
   return false;
 };
 
-const _fastHash = (m) => {
-  let h = ((m[0] * 100) | 0);
-  h = ((h << 5) - h + ((m[4] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[8] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[12] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[1] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[5] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[9] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[13] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[2] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[6] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[10] * 100) | 0)) | 0;
-  h = ((h << 5) - h + ((m[14] * 100) | 0)) | 0;
-  return h;
-};
+const _fastHash = () => wasm.fastHash(0);
 
 const INSPECT_DURATIONS = {
   vita: 600, rev: 550, mac10: 800, ar9: 550, m60: 550,
@@ -112,13 +99,7 @@ const _parseHexCached = (hex, px) => {
   px[3] = 255;
 };
 
-const _parseSig = (mat, offset) => {
-  return (
-    (Math.round(Math.sqrt(mat[offset] * mat[offset] + mat[offset + 1] * mat[offset + 1] + mat[offset + 2] * mat[offset + 2]) * 100) << 20) |
-    (Math.round(Math.sqrt(mat[offset + 4] * mat[offset + 4] + mat[offset + 5] * mat[offset + 5] + mat[offset + 6] * mat[offset + 6]) * 100) << 10) |
-    Math.round(Math.sqrt(mat[offset + 8] * mat[offset + 8] + mat[offset + 9] * mat[offset + 9] + mat[offset + 10] * mat[offset + 10]) * 100)
-  );
-};
+const _parseSig = () => wasm.parseSig(0);
 
 const _checkNonAffine = (v3, v7, v11, v15) => {
   return (v3 > 0.001 || v3 < -0.001) || (v7 > 0.001 || v7 < -0.001) || (v11 > 0.001 || v11 < -0.001) || (v15 - 1.0 > 0.001 || v15 - 1.0 < -0.001);
@@ -179,11 +160,11 @@ const _installWrappers = (gl) => {
     _matBuf[8] = d8; _matBuf[9] = d9; _matBuf[10] = d10; _matBuf[11] = d11;
     _matBuf[12] = d12; _matBuf[13] = d13; _matBuf[14] = d14; _matBuf[15] = d15;
 
-    if (_bloomCheck(_fastHash(_matBuf))) {
+    if (_bloomCheck(_fastHash())) {
       return origUniform4(location, transpose, data, srcOffset, srcLength);
     }
 
-    const sig = _parseSig(_matBuf, 0);
+    const sig = _parseSig();
     const treatAsArm = sig === TOMAHAWK_SIG ? (++_tomahawkCount > 1) : isArmSig(sig);
 
     if (!treatAsArm) {

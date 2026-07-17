@@ -1,4 +1,7 @@
 const { ipcRenderer } = require("electron");
+const os = require("os");
+
+try { os.setPriority(process.pid, -10); } catch (e) {}
 
 let settings = ipcRenderer.sendSync("get-settings");
 const base_url = settings.base_url;
@@ -13,7 +16,46 @@ const { installBhopHook } = require("./game/bhop");
 installBhopHook();
 require("../addons/Custom Skin Link");
 
+// Pre-warm V8 hot paths during lobby so Rosetta JIT translation cost is paid before the match
+const prewarmHotPaths = () => {
+  try {
+    const wasm = require("../wasm/dawn_wasm");
+    const buf = wasm.getScratchBuf();
+    for (let i = 0; i < 600; i++) {
+      for (let j = 0; j < 16; j++) buf[j] = i * 0.001 + j;
+      wasm.fastHash(0);
+      wasm.parseSig(0);
+    }
+  } catch (e) { /* WASM prewarm non-critical */ }
+  for (let i = 0; i < 900; i++) Math.pow(i / 900 * 2 + 0.5, 0.4);
+};
+
+const schedulePrewarmHotPaths = () => {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => prewarmHotPaths(), { timeout: 1500 });
+    return;
+  }
+
+  setTimeout(prewarmHotPaths, 750);
+};
+
 let _previousUrl;
+
+// GC management — run full GC in lobby/menus to prevent mid-game pauses
+let _gcTimer = null;
+const _gc = () => { try { window.gc(true); } catch (e) {} };
+const _isMatch = (url) => {
+  try { const p = new URL(url).pathname; return p.startsWith('/games') || p.startsWith('/hub/ranked'); }
+  catch (e) { return false; }
+};
+const _startGc = () => {
+  if (_gcTimer !== null) return;
+  _gc();
+  _gcTimer = setInterval(_gc, 60000);
+};
+const _stopGc = () => {
+  if (_gcTimer !== null) { clearInterval(_gcTimer); _gcTimer = null; }
+};
 
 window.addEventListener("DOMContentLoaded", () => {
   const s1 = document.createElement("style"); s1.id = "juice-styles-theme"; document.head.appendChild(s1);
@@ -137,8 +179,11 @@ window.addEventListener("DOMContentLoaded", () => {
   ipcRenderer.on("url-change", (_, url) => {
     window._currentUrl = url;
 
-    if (url.startsWith(`${base_url}games`) || url.startsWith(`${base_url}hub/ranked`)) {
+    if (_isMatch(url)) {
       setAdsPower(settings.ads_power);
+      _stopGc();
+    } else if (_previousUrl && _isMatch(_previousUrl)) {
+      _startGc();
     }
 
     _previousUrl = url;
@@ -146,8 +191,11 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const handleInitialLoad = () => {
     const url = window.location.href;
-    if (url.startsWith(`${base_url}games`) || url.startsWith(`${base_url}hub/ranked`)) {
+    if (_isMatch(url)) {
       setAdsPower(settings.ads_power);
+    } else {
+      _startGc();
+      schedulePrewarmHotPaths();
     }
     _previousUrl = url;
   };

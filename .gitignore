@@ -3,3 +3,5 @@ build
 .vscode
 .gitattributes
 package-lock.json
+# WASM build artifacts
+src/wasm/target/
