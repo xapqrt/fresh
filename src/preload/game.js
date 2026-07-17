@@ -16,6 +16,76 @@ const { installBhopHook } = require("./game/bhop");
 installBhopHook();
 require("../addons/Custom Skin Link");
 
+const installFpsOverlay = () => {
+  let enabled = false;
+  let rafId = null;
+  let lastTime = performance.now();
+  const RING = 60;
+  const ring = new Float64Array(RING);
+  let idx = 0;
+  let filled = 0;
+  let sum = 0;
+
+  const el = document.createElement("div");
+  el.id = "df-fps-overlay";
+  el.style.cssText = "position:fixed;top:8px;right:8px;z-index:99999;font:bold 12px/1.3 monospace;color:#0f0;background:rgba(0,0,0,0.75);padding:4px 7px;border-radius:4px;pointer-events:none;display:none;white-space:pre;user-select:none;";
+  const textEl = document.createElement("div");
+  el.appendChild(textEl);
+  const cvs = document.createElement("canvas");
+  cvs.width = 120; cvs.height = 28;
+  cvs.style.cssText = "display:block;margin-top:3px;width:120px;height:28px;";
+  el.appendChild(cvs);
+  const cx = cvs.getContext("2d");
+
+  const toggle = () => {
+    enabled = !enabled;
+    el.style.display = enabled ? "" : "none";
+    if (enabled) {
+      lastTime = performance.now(); idx = 0; filled = 0; sum = 0;
+      rafId = requestAnimationFrame(tick);
+    } else if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+  };
+
+  const tick = (now) => {
+    const delta = now - lastTime;
+    lastTime = now;
+    if (filled === RING) sum -= ring[idx];
+    ring[idx] = delta;
+    sum += delta;
+    idx = (idx + 1) % RING;
+    if (filled < RING) filled++;
+    const avg = sum / filled;
+    textEl.textContent = `${(1000/avg).toFixed(1)} FPS  ${avg.toFixed(2)} ms`;
+
+    cx.clearRect(0, 0, 120, 28);
+    const bw = 120 / filled;
+    let min = ring[0], max = ring[0];
+    for (let i = 0; i < filled; i++) {
+      const v = ring[i]; if (v < min) min = v; if (v > max) max = v;
+    }
+    const range = Math.max(max - min, 1);
+    for (let i = 0; i < filled; i++) {
+      const h = ((ring[i] - min) / range) * 24;
+      cx.fillStyle = ring[i] > avg * 1.5 ? "#f55" : "#0f0";
+      cx.fillRect(bw * i, 28 - h - 2, Math.max(bw - 0.5, 1), h);
+    }
+    rafId = requestAnimationFrame(tick);
+  };
+
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f" && e.isTrusted) {
+      e.preventDefault(); e.stopPropagation(); toggle();
+    }
+  }, true);
+
+  const ready = () => {
+    if (document.body) { document.body.appendChild(el); return; }
+    requestAnimationFrame(ready);
+  };
+  ready();
+};
+installFpsOverlay();
+
 // Pre-warm V8 hot paths during lobby so Rosetta JIT translation cost is paid before the match
 const prewarmHotPaths = () => {
   try {

@@ -1,6 +1,7 @@
 const { app } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 function applySwitches() {
   let in_process_gpu = false;
@@ -30,6 +31,11 @@ function applySwitches() {
   app.commandLine.appendSwitch("enable-zero-copy");
   app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
+  app.commandLine.appendSwitch("disable-frame-rate-limit");
+  app.commandLine.appendSwitch("enable-accelerated-2d-canvas");
+  const rasterThreads = Math.min(os.cpus().length, 4);
+  app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
+  app.commandLine.appendSwitch("enable-features", "CanvasOop");
   app.commandLine.appendSwitch("force-gpu-mem-available-mb", "4096");
   app.commandLine.appendSwitch("enable-webgl-image-chromium");
   app.commandLine.appendSwitch("force-color-profile", "srgb");
