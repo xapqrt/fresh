@@ -95,6 +95,8 @@ const createWindow = () => {
     height: 720,
     show: false,
     backgroundColor: "#141414",
+    backgroundThrottling: false,
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -110,9 +112,6 @@ const createWindow = () => {
       gameWindow.setFullScreen(true);
     });
   }
-
-  const cap = settings.fps_cap > 0 ? settings.fps_cap : 240;
-  gameWindow.webContents.setFrameRate(cap);
 
   gameWindow.webContents.setUserAgent(
     `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.296 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`

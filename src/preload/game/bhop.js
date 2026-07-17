@@ -27,24 +27,21 @@ function installBhopHook() {
       (el.getAttribute && el.getAttribute("role") === "textbox");
   }
 
-  // Time-based interval (not frame-count-based) so bhop cadence is
-  // consistent at any refresh rate. Each phase hold ~40ms → ~80ms
-  // full press-release cycle, which matches normal bunnyhop rhythm
-  // and avoids input drops from server-auth rate limiting.
   var _lastToggle = 0;
   var _holdMs = 40;
   var _jitterMs = 6;
+  var _jitterAccum = 0;
 
   function _tick(now) {
     if (!_bhopOn) { _rAFId = null; return; }
-    if (document.hidden) { _rAFId = requestAnimationFrame(_tick); return; }
 
-    if (now - _lastToggle < _holdMs + Math.random() * _jitterMs) {
+    if (now - _lastToggle < _holdMs + _jitterAccum) {
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     _lastToggle = now;
+    _jitterAccum = Math.random() * _jitterMs;
 
     if (_phase === 1) {
       _qDownPhys = false; _postQ(false); _phase = 2;

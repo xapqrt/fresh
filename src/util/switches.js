@@ -16,6 +16,9 @@ function applySwitches() {
     }
   } catch (e) {}
 
+  app.commandLine.appendSwitch("use-gl", "angle");
+  app.commandLine.appendSwitch("use-angle", "metal");
+
   if (use_angle_opengl) {
     app.commandLine.appendSwitch("use-angle", "opengl");
   }
@@ -37,11 +40,11 @@ function applySwitches() {
     app.commandLine.appendSwitch("in-process-gpu");
   }
 
-  app.commandLine.appendSwitch("js-flags", "--expose-gc");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion," +
-    "VizDisplayCompositor," +
-    "EnableVizPollForCompletion");
+    "CalculateNativeWinOcclusion");
 
   app.allowRendererProcessReuse = true;
 }

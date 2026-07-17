@@ -60,8 +60,6 @@
     "accept_on_click": false,
     "customizations": true,
     "animations": false,
-    "unlimited_fps": false,
-    "fps_cap": 0,
     "num_raster_threads": 4,
     "performance_mode": true,
     "auto_fullscreen": true,
