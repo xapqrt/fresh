@@ -111,6 +111,11 @@ const createWindow = () => {
     });
   }
 
+  const cap = settings.fps_cap > 0 ? settings.fps_cap : 240;
+  if (!settings.unlimited_fps) {
+    gameWindow.webContents.setFrameRate(cap);
+  }
+
   gameWindow.webContents.setUserAgent(
     `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.296 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`
   );
