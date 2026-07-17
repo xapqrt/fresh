@@ -98,6 +98,8 @@ const createWindow = () => {
     backgroundThrottling: false,
     autoHideMenuBar: true,
     webPreferences: {
+      scrollBounce: false,
+      pinchZoom: false,
       nodeIntegration: true,
       contextIsolation: false,
       webviewTag: true,
