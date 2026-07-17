@@ -31,7 +31,6 @@ function applySwitches() {
   app.commandLine.appendSwitch("enable-zero-copy");
   app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
-  app.commandLine.appendSwitch("disable-frame-rate-limit");
   app.commandLine.appendSwitch("enable-accelerated-2d-canvas");
   const rasterThreads = Math.min(os.cpus().length, 4);
   app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
@@ -50,7 +49,9 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion");
+    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling");
+  app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
+  app.commandLine.appendSwitch("audio-buffer-size", "512");
 
   app.allowRendererProcessReuse = true;
 }

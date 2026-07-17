@@ -1,4 +1,4 @@
-function installBhopHook() {
+function installBhopHook(capCheck) {
   var _shiftDown = false;
   var _qDown = false;
   var _bhopOn = false;
@@ -34,6 +34,8 @@ function installBhopHook() {
 
   function _tick(now) {
     if (!_bhopOn) { _rAFId = null; return; }
+
+    if (capCheck && !capCheck(now)) { _rAFId = requestAnimationFrame(_tick); return; }
 
     if (now - _lastToggle < _holdMs + _jitterAccum) {
       _rAFId = requestAnimationFrame(_tick);
