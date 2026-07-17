@@ -109,12 +109,6 @@ const createWindow = () => {
     },
   });
 
-  if (process.platform === "darwin" && settings.auto_fullscreen) {
-    gameWindow.once("ready-to-show", () => {
-      gameWindow.setFullScreen(true);
-    });
-  }
-
   gameWindow.webContents.setUserAgent(
     `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.296 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`
   );
@@ -128,11 +122,14 @@ const createWindow = () => {
     gameWindow.webContents.send("url-change", url);
   });
 
-  gameWindow.loadURL(settings.base_url);
   gameWindow.removeMenu();
+  gameWindow.loadURL(settings.base_url);
   gameWindow.maximize();
 
   gameWindow.once("ready-to-show", () => {
+    if (process.platform === "darwin" && settings.auto_fullscreen) {
+      gameWindow.setFullScreen(true);
+    }
     gameWindow.show();
   });
 

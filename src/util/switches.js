@@ -34,7 +34,8 @@ function applySwitches() {
   app.commandLine.appendSwitch("enable-accelerated-2d-canvas");
   const rasterThreads = Math.min(os.cpus().length, 4);
   app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
-  app.commandLine.appendSwitch("enable-features", "CanvasOop");
+  const enableFeatures = use_angle_opengl ? "CanvasOop" : "CanvasOop,MetalOnlyGraphics";
+  app.commandLine.appendSwitch("enable-features", enableFeatures);
   app.commandLine.appendSwitch("force-gpu-mem-available-mb", "4096");
   app.commandLine.appendSwitch("enable-webgl-image-chromium");
   app.commandLine.appendSwitch("force-color-profile", "srgb");
