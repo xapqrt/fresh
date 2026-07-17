@@ -32,10 +32,18 @@ function installBhopHook(capCheck) {
   var _jitterMs = 6;
   var _jitterAccum = 0;
 
+  var _VYSNC_BUDGET = 3.6;
+  var _VSYNC_PERIOD = 4.2;
+
   function _tick(now) {
     if (!_bhopOn) { _rAFId = null; return; }
 
     if (capCheck && !capCheck(now)) { _rAFId = requestAnimationFrame(_tick); return; }
+
+    if (_lastToggle !== 0 && performance.now() - now > _VYSNC_BUDGET) {
+      _rAFId = requestAnimationFrame(_tick);
+      return;
+    }
 
     if (now - _lastToggle < _holdMs + _jitterAccum) {
       _rAFId = requestAnimationFrame(_tick);

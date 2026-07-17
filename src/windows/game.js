@@ -137,6 +137,7 @@ const createWindow = () => {
 
   gameWindow.once("ready-to-show", () => {
     clearTimeout(showFallback);
+    try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
     if (process.platform === "darwin" && settings.auto_fullscreen) {
       gameWindow.setFullScreen(true);
     }
