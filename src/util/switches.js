@@ -17,9 +17,11 @@ function applySwitches() {
     }
   } catch (e) {}
 
-  app.commandLine.appendSwitch("use-gl", "angle");
-  // use-angle must be set ONCE; metal is the stable backend on Apple Silicon.
-  app.commandLine.appendSwitch("use-angle", use_angle_opengl ? "opengl" : "metal");
+  // NOTE: intentionally do NOT force use-gl=angle / use-angle=metal. Forcing the
+  // ANGLE-Metal backend on Electron 12 / Apple Silicon causes
+  // 'glBindTexture: target was GL_TEXTURE_RECTANGLE_ARB' + 'failed to create surface'
+  // GL errors -> splash stuck on blue screen. Let Chromium pick its default macOS
+  // Metal backend (the known-working upstream behavior).
 
   app.commandLine.appendSwitch("high-dpi-support", "1");
   app.commandLine.appendSwitch("ignore-gpu-blocklist");
