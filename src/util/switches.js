@@ -21,7 +21,6 @@ function applySwitches() {
     app.commandLine.appendSwitch("disable-gpu-vsync");
   }
 
-  app.commandLine.appendSwitch("use-angle", "metal");
   app.commandLine.appendSwitch("high-dpi-support", "1");
   app.commandLine.appendSwitch("ignore-gpu-blacklist");
   app.commandLine.appendSwitch("ignore-gpu-blocklist");
@@ -38,6 +37,12 @@ function applySwitches() {
   if (in_process_gpu) {
     app.commandLine.appendSwitch("in-process-gpu");
   }
+
+  app.commandLine.appendSwitch("js-flags", "--expose-gc");
+  app.commandLine.appendSwitch("disable-features",
+    "CalculateNativeWinOcclusion," +
+    "VizDisplayCompositor," +
+    "EnableVizPollForCompletion");
 
   app.allowRendererProcessReuse = true;
 }

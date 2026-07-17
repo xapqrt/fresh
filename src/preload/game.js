@@ -43,7 +43,7 @@ let _previousUrl;
 
 // GC management — run full GC in lobby/menus to prevent mid-game pauses
 let _gcTimer = null;
-const _gc = () => { try { window.gc(true); } catch (e) {} };
+const _gc = typeof gc === 'function' ? () => { try { gc(true); } catch (e) {} } : () => {};
 const _isMatch = (url) => {
   try { const p = new URL(url).pathname; return p.startsWith('/games') || p.startsWith('/hub/ranked'); }
   catch (e) { return false; }
