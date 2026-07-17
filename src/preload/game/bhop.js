@@ -6,9 +6,6 @@ function installBhopHook() {
   var _rAFId = null;
   var _phase = 0;
 
-  var DOWN_TICKS = 1;
-  var UP_TICKS = 1;
-
   var _qDownEvt = new KeyboardEvent("keydown", {
     key: "q", code: "KeyQ", keyCode: 81, which: 81,
     bubbles: true, cancelable: true,
@@ -30,16 +27,24 @@ function installBhopHook() {
       (el.getAttribute && el.getAttribute("role") === "textbox");
   }
 
-  var _lastTick = 0;
-  var _rAFCount = 0;
-  var _tickInterval = 3;
+  // Time-based interval (not frame-count-based) so bhop cadence is
+  // consistent at any refresh rate. Each phase hold ~40ms → ~80ms
+  // full press-release cycle, which matches normal bunnyhop rhythm
+  // and avoids input drops from server-auth rate limiting.
+  var _lastToggle = 0;
+  var _holdMs = 40;
+  var _jitterMs = 6;
 
   function _tick(now) {
     if (!_bhopOn) { _rAFId = null; return; }
     if (document.hidden) { _rAFId = requestAnimationFrame(_tick); return; }
-    _rAFCount++;
-    if (_rAFCount < _tickInterval) { _rAFId = requestAnimationFrame(_tick); return; }
-    _rAFCount = 0;
+
+    if (now - _lastToggle < _holdMs + Math.random() * _jitterMs) {
+      _rAFId = requestAnimationFrame(_tick);
+      return;
+    }
+
+    _lastToggle = now;
 
     if (_phase === 1) {
       _qDownPhys = false; _postQ(false); _phase = 2;
@@ -52,9 +57,8 @@ function installBhopHook() {
   function _start() {
     if (_bhopOn) return;
     _bhopOn = true;
-    _rAFCount = 0;
-    _tickInterval = 3;
     _phase = 1; _qDownPhys = true; _postQ(true);
+    _lastToggle = performance.now();
     _rAFId = requestAnimationFrame(_tick);
   }
 

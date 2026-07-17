@@ -78,7 +78,6 @@
     "bhop_enabled": true,
     "bhop_jump": "KeyQ",
     "bhop_toggle": "Shift",
-    "rapid_fire": false,
     "stiff_models": false,
     "local_customizations": false,
     "local_animated_gradient": false,
