@@ -23,6 +23,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let lock = NSLock()
 
     private var _isRecording = false
+    private var _isPaused = false
     private var stream: SCStream?
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -30,6 +31,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var frameCount = 0
 
     var isRecording: Bool { lock.withLock { _isRecording } }
+    var isPaused: Bool { lock.withLock { _isPaused } }
 
     var onStatusChange: ((Bool) -> Void)?
 
@@ -150,7 +152,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func _abortRecording() {
-        lock.withLock { _isRecording = false }
+        lock.withLock { _isRecording = false; _isPaused = false }
         stream = nil
         writer = nil
         videoInput = nil
@@ -158,6 +160,21 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.onStatusChange?(false)
         }
+    }
+
+    /// Pause/resume the live capture without finalizing the file. While paused
+    /// we simply drop incoming frames (SCStream has no public pause API in this
+    /// SDK), so the clip stays a single continuous movie with a gap.
+    func pause() {
+        guard isRecording, !isPaused else { return }
+        lock.withLock { _isPaused = true }
+        print("[DawnRecorder] Paused")
+    }
+
+    func resume() {
+        guard isRecording, isPaused else { return }
+        lock.withLock { _isPaused = false }
+        print("[DawnRecorder] Resumed")
     }
 
     private func _finalizeRecording() {
@@ -190,8 +207,8 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
             if writer.status == .completed {
                 let size = (try? FileManager.default.attributesOfItem(atPath: writer.outputURL.path))?[.size] as? UInt64 ?? 0
                 print("[DawnRecorder] Saved: \(writer.outputURL.lastPathComponent) (\(size) bytes)")
-                if size == 0 {
-                    print("[DawnRecorder] WARNING: output file is 0 bytes!")
+                if size < 1024 {
+                    print("[DawnRecorder] Clip too small (\(size) bytes) — discarding")
                     try? FileManager.default.removeItem(at: writer.outputURL)
                 }
             } else {
@@ -278,6 +295,9 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
             print("[DawnRecorder] Recording \(w)x\(h) H.264 to \(fileName)")
         }
 
+        // While paused we drop frames so the clip stays continuous (gap).
+        if isPaused { return }
+
         guard let input = videoInput, let writer = writer,
               writer.status == .writing, input.isReadyForMoreMediaData else { return }
 
@@ -325,32 +345,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildMenu() {
-        updateStatusBar(false)
-
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: ""))
+
+        let start = NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: "")
+        start.target = self
+        menu.addItem(start)
+
+        let pause = NSMenuItem(title: "Pause Recording", action: #selector(pauseRecording), keyEquivalent: "p")
+        pause.target = self
+        menu.addItem(pause)
+
+        let open = NSMenuItem(title: "Open Clips Folder", action: #selector(openClipsFolder), keyEquivalent: "o")
+        open.target = self
+        menu.addItem(open)
+
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+
         statusItem.menu = menu
+        updateStatusBar(false)
     }
 
     private func updateStatusBar(_ recording: Bool) {
         guard let btn = statusItem.button else { return }
+        let items = statusItem.menu?.items ?? []
 
         if recording {
             btn.attributedTitle = NSAttributedString(string: "\u{25CF} Rec", attributes: [
                 .foregroundColor: NSColor.red,
                 .font: NSFont.menuBarFont(ofSize: 12)
             ])
+            items[0].title = "Stop Recording"
+            items[1].title = recorder.isPaused ? "Resume Recording" : "Pause Recording"
+            items[1].isEnabled = true
         } else {
             btn.title = "\u{25CB}"
+            items[0].title = "Start Recording"
+            items[1].title = "Pause Recording"
+            items[1].isEnabled = false
         }
-
-        statusItem.menu?.items[0].title = recording ? "Stop Recording" : "Start Recording"
+        items[2].title = "Open Clips Folder"
     }
 
     @objc private func toggleRecording() {
         recorder.toggle()
+    }
+
+    @objc private func pauseRecording() {
+        if recorder.isPaused { recorder.resume() } else { recorder.pause() }
+        updateStatusBar(recorder.isRecording)
+    }
+
+    @objc private func openClipsFolder() {
+        let clips = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Movies/clips")
+        try? FileManager.default.createDirectory(at: clips, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(clips)
     }
 
     private func setupFIFOReader() {
@@ -452,6 +504,24 @@ private func main() {
     if args.contains("--stop") || args.contains("-S") {
         sendCommand("S")
         return
+    }
+
+    // Single-instance guard: hold an exclusive lock on a lock file. If another
+    // instance is already running (e.g. user double-clicked the app again, or
+    // launchd KeepAlive relaunched it), this open/flock fails and we exit so we
+    // never have two daemons fighting over the FIFO / menu bar. flock is
+    // auto-released when the process dies, so it's crash-safe.
+    let lockPath = NSHomeDirectory() + "/Library/Application Support/dawn-client/recorder.lock"
+    try? FileManager.default.createDirectory(at: URL(fileURLWithPath: (lockPath as NSString).deletingLastPathComponent), withIntermediateDirectories: true)
+    let lockFD = open(lockPath, O_RDWR | O_CREAT, 0o644)
+    if lockFD >= 0 {
+        if flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
+            // Another instance holds the lock.
+            let fd2 = open(Config.fifoPath, O_WRONLY | O_NONBLOCK)
+            if fd2 >= 0 { close(fd2) } // ping the running instance so it stays awake
+            print("[DawnRecorder] Already running — exiting this instance.")
+            exit(0)
+        }
     }
 
     setbuf(__stdoutp, nil)
