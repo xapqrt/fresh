@@ -399,13 +399,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             userInfo: Unmanaged.passUnretained(recorder).toOpaque()
         )
 
-        if let tap = tap {
-            eventTap = tap
-            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-            print("[DawnRecorder] Hotkey F9 installed (keycode \(Config.hotkeyCode))")
-        } else {
+        guard let tap = tap else {
             print("[DawnRecorder] Hotkey tap not available (keyboard shortcut disabled)")
+            return
+        }
+        eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        // A global session tap only receives events if the process is trusted for
+        // Accessibility. Without it the tap exists but stays DISABLED and the
+        // hotkey silently does nothing. Prompt ONCE (only when not already
+        // trusted) so we don't spam the permission dialog on every launch.
+        if !CGEvent.tapIsEnabled(tap: tap) {
+            print("[DawnRecorder] Hotkey disabled: Accessibility permission not granted")
+            if !AXIsProcessTrusted() {
+                let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+                AXIsProcessTrustedWithOptions(opts)
+                print("[DawnRecorder] Requesting Accessibility permission — please grant it and restart Dawn Recorder")
+            }
+        } else {
+            print("[DawnRecorder] Hotkey F9 installed (keycode \(Config.hotkeyCode))")
         }
     }
 }
