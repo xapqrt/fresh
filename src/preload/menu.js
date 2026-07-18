@@ -1743,7 +1743,7 @@ class Menu {
 
   handleKeyEvents() {
     document.addEventListener("keydown", (e) => {
-      if (e.code !== this.settings.menu_keybind) return;
+      if (e.code !== this.settings.menu_keybind && e.key !== 'Shift') return;
       if (window.location.href.includes('/games/')) return;
       const isActive = this.menuToggle.getAttribute("data-active") === "true";
       if (!isActive) {

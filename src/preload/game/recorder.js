@@ -4,7 +4,7 @@ var _desktopCapturer = null;
 try { _desktopCapturer = require('electron').desktopCapturer; } catch (e) { }
 
 function installRecorder() {
-  if (!_desktopCapturer || !_ipc) return;
+  if (!_desktopCapturer || !_ipc) { console.error('[Recorder] missing desktopCapturer or ipcRenderer'); return; }
 
   var _recording = false;
   var _mediaRecorder = null;
@@ -83,9 +83,9 @@ function installRecorder() {
           _recording = true;
           _createIndicator();
           _indicator.style.display = '';
-        }).catch(function(e) {});
-      }).catch(function(e) {});
-    } catch (e) {}
+        }).catch(function(e) { console.error('[Recorder] getUserMedia failed:', e); });
+      }).catch(function(e) { console.error('[Recorder] getSources failed:', e); });
+    } catch (e) { console.error('[Recorder] _start error:', e); }
   }
 
   function _stop() {
@@ -101,7 +101,7 @@ function installRecorder() {
   }
 
   document.addEventListener('keydown', function(e) {
-    if (e.key === 'F9' && e.isTrusted) {
+    if (e.key === 'F9') {
       e.preventDefault();
       e.stopPropagation();
       _toggle();
