@@ -52,6 +52,7 @@ function installRecorder() {
 
   function _start() {
     if (_recording) return;
+    try { require('fs').appendFileSync(require('os').homedir() + '/rec-debug.log', 'REC START w=' + (window.screen.width) + '\n'); } catch (e) {}
     try {
       var cfg = _readConfig();
       var w = Math.round((window.screen.width || 1920) * cfg.scale);
