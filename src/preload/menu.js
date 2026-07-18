@@ -20,6 +20,7 @@ class Menu {
     this.menu = this.createMenu();
     this.localStorage = window.localStorage;
     this.menuToggle = this.menu.querySelector(".menu");
+    require("fs").appendFileSync(require("os").homedir()+"/menu-debug.log", "MENU EL="+!!this.menu+" TOGGLE EL="+!!this.menuToggle+"\n");
     this.tabToContentMap = {
       ui: this.menu.querySelector("#ui-options"),
       game: this.menu.querySelector("#game-options"),
@@ -78,6 +79,8 @@ class Menu {
   }
 
   init() {
+    try {
+    require("fs").appendFileSync(require("os").homedir()+"/menu-debug.log", "INIT START t="+Date.now()+"\n");
     this.setVersion();
     this.setUser();
     this.setKeybind();
@@ -88,7 +91,9 @@ class Menu {
     this.setLocalProfileBackground();
     this.setTheme();
     this.handleKeyEvents();
+    require("fs").appendFileSync(require("os").homedir()+"/menu-debug.log", "BEFORE IPC LISTENER\n");
     ipcRenderer.on("toggle-menu", () => this._toggleMenu());
+    require("fs").appendFileSync(require("os").homedir()+"/menu-debug.log", "AFTER IPC LISTENER (attached)\n");
     this.initMenu();
     this.initChangelogs();
     this.handleSliderInputs();
@@ -151,6 +156,7 @@ class Menu {
         console.error("Error restoring weapon selection:", e);
       }
     }
+    } catch(e) { require("fs").appendFileSync(require("os").homedir()+"/menu-debug.log", "INIT ERROR: "+e.message+"\n"); }
   }
 
   saveWeaponSelectionState() {
