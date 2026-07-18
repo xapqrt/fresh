@@ -31,9 +31,31 @@ function installRecorder() {
     _start();
   }
 
+  function _readConfig() {
+    var s = window.dawnSettings || window.settings || {};
+    return {
+      fps: parseInt(s.rec_fps) || 60,
+      scale: parseFloat(s.rec_scale) || 1,
+      codec: s.rec_codec || 'vp9',
+      indicator: s.rec_indicator !== undefined ? !!s.rec_indicator : true
+    };
+  }
+
+  function _updateUI(recording) {
+    var statusEl = document.getElementById('rec-status');
+    if (statusEl) statusEl.innerText = recording ? 'Recording' : 'Idle';
+    var btn = document.getElementById('rec-start-stop');
+    if (btn) btn.innerText = recording ? 'Stop Recording' : 'Start Recording';
+  }
+
   function _start() {
     if (_recording) return;
     try {
+      var cfg = _readConfig();
+      var w = Math.round((window.screen.width || 1920) * cfg.scale);
+      var h = Math.round((window.screen.height || 1080) * cfg.scale);
+      if (w % 2) w++; if (h % 2) h++;
+
       _desktopCapturer.getSources({
         types: ['window'],
         thumbnailSize: { width: 0, height: 0 },
@@ -51,12 +73,17 @@ function installRecorder() {
             mandatory: {
               chromeMediaSource: 'desktop',
               chromeMediaSourceId: src.id,
+              width: w,
+              height: h,
             },
           },
         }).then(function(stream) {
           _stream = stream;
           _chunks = [];
-          var mime = 'video/webm;codecs=vp9';
+          var mime = 'video/webm;codecs=' + cfg.codec;
+          if (!MediaRecorder.isTypeSupported(mime)) {
+            mime = 'video/webm;codecs=vp9';
+          }
           if (!MediaRecorder.isTypeSupported(mime)) {
             mime = 'video/webm;codecs=vp8';
           }
@@ -82,7 +109,8 @@ function installRecorder() {
           _mediaRecorder.start(1000);
           _recording = true;
           _createIndicator();
-          _indicator.style.display = '';
+          _indicator.style.display = cfg.indicator ? '' : 'none';
+          _updateUI(true);
         }).catch(function(e) { console.error('[Recorder] getUserMedia failed:', e); });
       }).catch(function(e) { console.error('[Recorder] getSources failed:', e); });
     } catch (e) { console.error('[Recorder] _start error:', e); }
@@ -98,6 +126,7 @@ function installRecorder() {
       if (_stream) { _stream.getTracks().forEach(function(t) { t.stop(); }); _stream = null; }
       _mediaRecorder = null;
     }
+    _updateUI(false);
   }
 
   document.addEventListener('keydown', function(e) {
@@ -113,6 +142,13 @@ function installRecorder() {
   });
 
   _createIndicator();
+
+  window.__dawnRecorder = {
+    toggle: _toggle,
+    start: _start,
+    stop: _stop,
+    isRecording: function() { return _recording; }
+  };
 }
 
 module.exports = { installRecorder };

@@ -40,6 +40,10 @@
         <i class="fas fa-circle-info"></i>
         <span>About</span>
       </div>
+      <div data-tab="screenrec" class="juice tab">
+        <i class="fas fa-video"></i>
+        <span>Screen Rec</span>
+      </div>
     </div>
     <div class="sep"></div>
     <div class="tab-group">
@@ -838,6 +842,16 @@
           </div>
         </div>
       </div>
+    </div>
+    <div id="screenrec-options" class="juice options">
+      <div class="setting"><label>Recording</label><button id="rec-start-stop" class="juice">Start Recording</button></div>
+      <div class="setting"><label>Status</label><span id="rec-status">Idle</span></div>
+      <div class="setting"><label>FPS</label><select data-setting="rec_fps"><option value="30">30</option><option value="60" selected>60</option></select></div>
+      <div class="setting"><label>Scale</label><select data-setting="rec_scale"><option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1" selected>1.0x</option></select></div>
+      <div class="setting"><label>Codec</label><select data-setting="rec_codec"><option value="vp9" selected>VP9</option><option value="vp8">VP8</option></select></div>
+      <div class="setting"><label>Save to</label><span>~/Movies/clips</span></div>
+      <div class="setting"><label>Show indicator</label><input type="checkbox" data-setting="rec_indicator" checked></div>
+      <div class="setting"><label></label><span class="hint">Press F9 anytime to quick-toggle</span></div>
     </div>
     <div id="client-options" class="juice options">
       <div id="inner-tabs" class="juice tabs">

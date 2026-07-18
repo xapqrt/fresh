@@ -36,6 +36,7 @@ class Menu {
       performance: this.menu.querySelector("#performance-options"),
       client: this.menu.querySelector("#client-options"),
       scripts: this.menu.querySelector("#scripts-options"),
+      screenrec: this.menu.querySelector("#screenrec-options"),
       about: this.menu.querySelector("#about-client"),
       changelogs: this.menu.querySelector("#client-changelogs"),
     };
@@ -1743,15 +1744,15 @@ class Menu {
 
   handleKeyEvents() {
     document.addEventListener("keydown", (e) => {
-      if (e.code !== this.settings.menu_keybind && e.key !== 'Shift') return;
+      if (e.code !== this.settings.menu_keybind && e.code !== 'F10' && e.key !== 'Shift') return;
       if (window.location.href.includes('/games/')) return;
       const isActive = this.menuToggle.getAttribute("data-active") === "true";
       if (!isActive) {
-        document.exitPointerLock();
+        try { document.exitPointerLock(); } catch (e) {}
       }
       this.menuToggle.setAttribute("data-active", !isActive);
       this.localStorage.setItem("juice-menu", !isActive);
-    });
+    }, true);
   }
 
   initMenu() {
@@ -1773,6 +1774,11 @@ class Menu {
       const setting = select.dataset.setting;
       const value = this.settings[setting];
       select.value = value;
+    });
+
+    const recBtn = this.menu.querySelector('#rec-start-stop');
+    if (recBtn) recBtn.addEventListener('click', function() {
+      if (window.__dawnRecorder) window.__dawnRecorder.toggle();
     });
 
     textareas.forEach((textarea) => {
