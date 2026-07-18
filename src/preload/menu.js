@@ -88,6 +88,7 @@ class Menu {
     this.setLocalProfileBackground();
     this.setTheme();
     this.handleKeyEvents();
+    ipcRenderer.on("toggle-menu", () => this._toggleMenu());
     this.initMenu();
     this.initChangelogs();
     this.handleSliderInputs();
@@ -1742,16 +1743,19 @@ class Menu {
       .setAttribute("data-theme", this.settings.menu_theme);
   }
 
+  _toggleMenu() {
+    const isActive = this.menuToggle.getAttribute("data-active") === "true";
+    if (!isActive) {
+      try { document.exitPointerLock(); } catch (e) {}
+    }
+    this.menuToggle.setAttribute("data-active", !isActive);
+    this.localStorage.setItem("juice-menu", !isActive);
+  }
+
   handleKeyEvents() {
     document.addEventListener("keydown", (e) => {
       if (e.code !== this.settings.menu_keybind && e.code !== 'F10' && e.key !== 'Shift') return;
-      if (window.location.href.includes('/games/')) return;
-      const isActive = this.menuToggle.getAttribute("data-active") === "true";
-      if (!isActive) {
-        try { document.exitPointerLock(); } catch (e) {}
-      }
-      this.menuToggle.setAttribute("data-active", !isActive);
-      this.localStorage.setItem("juice-menu", !isActive);
+      this._toggleMenu();
     }, true);
   }
 

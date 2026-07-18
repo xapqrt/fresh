@@ -252,4 +252,5 @@ const initGame = () => {
 
 module.exports = {
   initGame,
+  getGameWindow: () => gameWindow,
 };

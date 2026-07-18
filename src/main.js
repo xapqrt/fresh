@@ -1,5 +1,6 @@
-const { app, ipcMain } = require("electron");
+const { app, ipcMain, globalShortcut } = require("electron");
 const { initSplash } = require("./windows/splash");
+const { getGameWindow } = require("./windows/game");
 const { applySwitches } = require("./util/switches");
 const fs = require("fs");
 const path = require("path");
@@ -10,6 +11,18 @@ applySwitches();
 app.on("ready", async () => {
   initSplash();
   try { require("os").setPriority(process.pid, -10); } catch (e) {}
+  globalShortcut.register("ShiftRight", () => {
+    const gw = getGameWindow();
+    if (gw && !gw.isDestroyed()) gw.webContents.send("toggle-menu");
+  });
+  globalShortcut.register("F8", () => {
+    const gw = getGameWindow();
+    if (gw && !gw.isDestroyed()) gw.webContents.send("toggle-menu");
+  });
+});
+
+app.on("before-quit", () => {
+  globalShortcut.unregisterAll();
 });
 
 ipcMain.on("save-recording", (e, buf) => {
