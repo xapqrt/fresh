@@ -107,6 +107,13 @@ ipcMain.on('dawn-bhop-key', (_, { type, keyCode, code, key }) => {
 let gameWindow = null;
 let _bhopDebugger = null;
 
+app.on('before-quit', () => {
+  if (_bhopDebugger) {
+    try { _bhopDebugger.detach(); } catch (e) {}
+    _bhopDebugger = null;
+  }
+});
+
 const createWindow = () => {
   gameWindow = new BrowserWindow({
     fullscreen: settings.auto_fullscreen,
