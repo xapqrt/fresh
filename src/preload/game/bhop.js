@@ -72,8 +72,8 @@ function installBhopHook(capCheck) {
   }
 
   var _lastToggle = 0;
-  var _holdMs = 18;
-  var _jitterMs = 3;
+  var _holdMs = 14;
+  var _jitterMs = 2;
   var _jitterAccum = 0;
 
   var _VYSNC_BUDGET = 3.6;

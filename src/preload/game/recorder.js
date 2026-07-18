@@ -52,7 +52,6 @@ function installRecorder() {
 
   function _start() {
     if (_recording) return;
-    try { require('fs').appendFileSync(require('os').homedir() + '/rec-debug.log', 'REC START w=' + (window.screen.width) + '\n'); } catch (e) {}
     try {
       var cfg = _readConfig();
       var w = Math.round((window.screen.width || 1920) * cfg.scale);
@@ -114,7 +113,6 @@ function installRecorder() {
             var reader = new FileReader();
             reader.onload = function() {
               _ipc.send('save-recording', reader.result);
-              try { require('fs').appendFileSync(require('path').join(require('os').homedir(), 'rec-debug.log'), 'REC STOP saved\n'); } catch(e) {}
             };
             reader.readAsArrayBuffer(blob);
             if (_stream) { _stream.getTracks().forEach(function(t) { t.stop(); }); _stream = null; }
@@ -122,7 +120,6 @@ function installRecorder() {
           };
           _mediaRecorder.start(1000);
           _recording = true;
-          try { require('fs').appendFileSync(require('path').join(require('os').homedir(), 'rec-debug.log'), 'REC START w='+w+' h='+h+' mime='+mime+'\n'); } catch(e) {}
           _createIndicator();
           _indicator.style.display = cfg.indicator ? '' : 'none';
           _updateUI(true);
@@ -150,7 +147,6 @@ function installRecorder() {
       var reader = new FileReader();
       reader.onload = function() {
         _ipc.send('save-recording', reader.result);
-        try { require('fs').appendFileSync(require('os').homedir() + '/rec-debug.log', 'REC STOP saved (fallback)\n'); } catch (e) {}
       };
       reader.readAsArrayBuffer(blob);
       if (_stream) { _stream.getTracks().forEach(function(t) { t.stop(); }); _stream = null; }
