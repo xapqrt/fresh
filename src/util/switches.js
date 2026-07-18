@@ -16,6 +16,13 @@ function applySwitches() {
         use_angle_opengl = !!stored.settings.use_angle_opengl;
         use_angle_metal = !!stored.settings.use_angle_metal;
       }
+      // also accept top-level keys (config.json is sometimes written flat)
+      if (stored && typeof stored.use_angle_metal === "boolean") {
+        use_angle_metal = stored.use_angle_metal;
+      }
+      if (stored && typeof stored.in_process_gpu === "boolean") {
+        in_process_gpu = stored.in_process_gpu;
+      }
     }
   } catch (e) {}
 

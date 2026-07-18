@@ -10,7 +10,13 @@ const createWindow = () => {
     width: 500,
     height: 500,
     frame: false,
-    transparent: true,
+    // NOTE: removed transparent:true — on Apple Silicon / Electron 12 the
+    // transparent window forces ANGLE to composite via GL_TEXTURE_RECTANGLE_ARB
+    // IOSurfaces, which makes Chromium's GL decoder log GL_INVALID_ENUM every
+    // frame on the game's WebGL context (.WebGL-*) and adds per-frame validation
+    // overhead -> stutter. An opaque splash with a solid bg is visually identical
+    // for the ~100ms it shows and keeps the GPU process in a clean 2D-texture mode.
+    backgroundColor: "#07070a",
     alwaysOnTop: true,
     resizable: false,
     show: false,
