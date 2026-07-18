@@ -267,6 +267,16 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 const Menu = require("../menu.js");
-function bootMenu() { try { new Menu(); } catch (e) { console.error("[menu] boot failed", e); } }
+function bootMenu() {
+  try {
+    const m = new Menu();
+    // Menu self-inits via its own DOMContentLoaded listener. If the document is
+    // already past 'loading', that event already fired and init() never runs,
+    // so call it explicitly (idempotent guard inside init via _inited flag).
+    if (document.readyState !== "loading" && typeof m.init === "function") {
+      if (!m._inited) m.init();
+    }
+  } catch (e) { console.error("[menu] boot failed", e); }
+}
 if (document.readyState === "loading") { document.addEventListener("DOMContentLoaded", bootMenu); }
 else { bootMenu(); }

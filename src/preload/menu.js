@@ -78,6 +78,8 @@ class Menu {
   }
 
   init() {
+    if (this._inited) return;
+    this._inited = true;
     try {
     this.setVersion();
     this.setUser();
