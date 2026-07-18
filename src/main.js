@@ -20,17 +20,13 @@ app.on("ready", async () => {
     const gw = getGameWindow();
     if (gw && !gw.isDestroyed()) gw.webContents.send("toggle-menu");
   });
-  //TEMP-TEST
   if (process.argv.includes("--test-menu")) {
-    const _testTimer = setInterval(() => {
+    setTimeout(() => {
       const gw = getGameWindow();
       if (gw && !gw.isDestroyed()) {
-        clearInterval(_testTimer);
-        setTimeout(() => {
-          if (!gw.isDestroyed()) gw.webContents.executeJavaScript("if(window.__testToggleMenu) window.__testToggleMenu();");
-        }, 3000);
+        gw.webContents.send("toggle-menu");
       }
-    }, 500);
+    }, 4000);
   }
 });
 

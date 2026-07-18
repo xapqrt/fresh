@@ -151,14 +151,6 @@ class Menu {
         console.error("Error restoring weapon selection:", e);
       }
     }
-    //TEMP-TEST
-    window.__testToggleMenu = () => {
-      const fs=require("fs"); const p=require("os").homedir()+"/menu-debug.log";
-      const before=this.menuToggle.getAttribute("data-active");
-      this._toggleMenu();
-      const after=this.menuToggle.getAttribute("data-active");
-      try{ fs.appendFileSync(p, "SELFTEST before="+before+" after="+after+"\n"); }catch(e){}
-    };
   }
 
   saveWeaponSelectionState() {
@@ -1752,7 +1744,8 @@ class Menu {
   }
 
   _toggleMenu() {
-    const fs=require("fs"); try { fs.appendFileSync(require("os").homedir()+"/menu-debug.log", "toggle "+Date.now()+" active="+(this.menuToggle.getAttribute("data-active")==="true"?"was-open":"was-closed")+"\n"); } catch(e){}
+    const fs=require("fs"); const os=require("os");
+    try { fs.appendFileSync(os.homedir()+"/menu-debug.log", "TOGGLE t="+Date.now()+" before="+this.menuToggle.getAttribute("data-active")+"\n"); } catch(e){}
     const isActive = this.menuToggle.getAttribute("data-active") === "true";
     if (!isActive) {
       try { document.exitPointerLock(); } catch (e) {}
