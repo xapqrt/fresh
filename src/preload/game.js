@@ -265,3 +265,8 @@ window.addEventListener("DOMContentLoaded", () => {
 
   handleInitialLoad();
 });
+
+const Menu = require("../menu.js");
+function bootMenu() { try { new Menu(); } catch (e) { console.error("[menu] boot failed", e); } }
+if (document.readyState === "loading") { document.addEventListener("DOMContentLoaded", bootMenu); }
+else { bootMenu(); }
