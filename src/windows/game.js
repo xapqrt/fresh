@@ -84,7 +84,28 @@ ipcMain.on("open-swapper-folder", () => {
   }
 });
 
+ipcMain.on('dawn-bhop-key', (_, { type, keyCode, code, key }) => {
+  if (_bhopDebugger) {
+    try {
+      _bhopDebugger.sendCommand('Input.dispatchKeyEvent', {
+        type,
+        key,
+        code,
+        keyCode,
+        windowsVirtualKeyCode: keyCode,
+      });
+    } catch (e) {
+      console.warn('[bhop] CDP sendCommand failed:', e.message);
+    }
+  } else {
+    const _key = code === 'KeyQ' ? 'q' : code;
+    const _type = type === 'keyDown' ? 'keydown' : 'keyup';
+    gameWindow.webContents.executeJavaScript(`(function(){var e=new KeyboardEvent('${_type}',{key:'${_key}',code:'${code}',keyCode:${keyCode},which:${keyCode},bubbles:true,cancelable:true});document.dispatchEvent(e);})()`);
+  }
+});
+
 let gameWindow = null;
+let _bhopDebugger = null;
 
 const createWindow = () => {
   gameWindow = new BrowserWindow({
@@ -144,14 +165,27 @@ const createWindow = () => {
     if (process.platform === "darwin" && settings.auto_fullscreen) {
       gameWindow.setFullScreen(true);
     }
+    try {
+      var dbg = gameWindow.webContents.debugger;
+      dbg.attach('1.3');
+      _bhopDebugger = dbg;
+    } catch (e) {
+      console.warn('[bhop] CDP attach failed, using synthetic fallback:', e.message);
+      _bhopDebugger = null;
+    }
     gameWindow.show();
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 
   gameWindow.on("closed", () => {
+    if (_bhopDebugger) {
+      try { _bhopDebugger.detach(); } catch (e) {}
+      _bhopDebugger = null;
+    }
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
+    ipcMain.removeAllListeners("dawn-bhop-key");
     gameWindow = null;
   });
 };

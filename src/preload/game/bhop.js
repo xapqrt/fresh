@@ -1,3 +1,6 @@
+var _ipc = null;
+try { _ipc = require('electron').ipcRenderer; } catch (e) { }
+
 function installBhopHook(capCheck) {
   var _shiftDown = false;
   var _qDown = false;
@@ -16,8 +19,17 @@ function installBhopHook(capCheck) {
   });
 
   function _postQ(down) {
-    var evt = down ? _qDownEvt : _qUpEvt;
-    document.dispatchEvent(evt);
+    if (_ipc) {
+      _ipc.send('dawn-bhop-key', {
+        type: down ? 'keyDown' : 'keyUp',
+        keyCode: 81,
+        code: 'KeyQ',
+        key: 'q',
+      });
+    } else {
+      var evt = down ? _qDownEvt : _qUpEvt;
+      document.dispatchEvent(evt);
+    }
   }
 
   function _isInput(el) {
