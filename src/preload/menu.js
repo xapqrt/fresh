@@ -151,6 +151,14 @@ class Menu {
         console.error("Error restoring weapon selection:", e);
       }
     }
+    //TEMP-TEST
+    window.__testToggleMenu = () => {
+      const fs=require("fs"); const p=require("os").homedir()+"/menu-debug.log";
+      const before=this.menuToggle.getAttribute("data-active");
+      this._toggleMenu();
+      const after=this.menuToggle.getAttribute("data-active");
+      try{ fs.appendFileSync(p, "SELFTEST before="+before+" after="+after+"\n"); }catch(e){}
+    };
   }
 
   saveWeaponSelectionState() {
