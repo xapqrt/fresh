@@ -64,9 +64,17 @@ function applySwitches() {
   if (in_process_gpu) {
     app.commandLine.appendSwitch("in-process-gpu");
   }
+  // ANGLE backend A/B (Apple Silicon GPU path). Pick ONE:
+  //  - use_angle_metal : ANGLE over Metal (usually lowest present latency)
+  //  - use_angle_opengl: ANGLE over OpenGL-on-Metal translation
+  //  - neither         : Chromium's default (ANGLE/GL on Apple Silicon)
+  // Test both in-game; keep the one that feels snappier / renders clean.
   if (use_angle_metal) {
     app.commandLine.appendSwitch("use-gl", "angle");
     app.commandLine.appendSwitch("use-angle", "metal");
+  } else if (use_angle_opengl) {
+    app.commandLine.appendSwitch("use-gl", "angle");
+    app.commandLine.appendSwitch("use-angle", "gl");
   }
 
   app.commandLine.appendSwitch("disable-background-timer-throttling");
@@ -78,8 +86,6 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache,CoalescedMouseEvent");
   app.commandLine.appendSwitch("touch-events", "disabled");
-  app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache");
   app.commandLine.appendSwitch("js-flags", "--max-old-space-size=2048 --expose-gc --optimize-for-size");
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");
@@ -87,7 +93,6 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-gpu-watchdog");   // prevent GPU process reset after sustained load (lag after several matches)
   app.commandLine.appendSwitch("disable-hang-monitor");
   app.commandLine.appendSwitch("gpu-process-priority", "high");
-  app.commandLine.appendSwitch("disable-background-timer-throttling");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
