@@ -15,6 +15,21 @@ protocol.registerSchemesAsPrivileged([
 
 applySwitches();
 
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_e, _argv) => {
+    const { getGameWindow } = require("./windows/game");
+    const gw = getGameWindow();
+    if (gw && !gw.isDestroyed()) {
+      if (gw.isMinimized()) gw.restore();
+      gw.focus();
+    }
+  });
+}
+
 app.on("ready", async () => {
   initSplash();
   try { if (process.platform === "darwin") require("os").setPriority(process.pid, -10); } catch (e) {}

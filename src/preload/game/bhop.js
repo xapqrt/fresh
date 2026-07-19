@@ -82,7 +82,7 @@ function installBhopHook() {
   }
 
   var _lastToggle = 0;
-  var _holdMs = 14;
+  var _holdMs = 10;
   var _jitterMs = 2;
   var _jitterAccum = 0;
 
