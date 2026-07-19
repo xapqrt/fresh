@@ -51,17 +51,20 @@ function installBhopHook(capCheck) {
   var _dD = { type: 'keyDown', keyCode: 68, code: 'KeyD', key: 'd' };
   var _dU = { type: 'keyUp', keyCode: 68, code: 'KeyD', key: 'd' };
 
+  // Key code table hoisted to module scope — avoids allocating a fresh
+  // object on every bhop keypress (cuts per-frame GC churn at high hop rates).
+  var _KEY_CODES = {
+    q: { keyCode: 81, code: 'KeyQ', key: 'q' },
+    a: { keyCode: 65, code: 'KeyA', key: 'a' },
+    d: { keyCode: 68, code: 'KeyD', key: 'd' },
+  };
+
   function _postKey(key, down) {
     // Relay to the main process, which dispatches via the CDP debugger's
     // Input.dispatchKeyEvent (lowest latency, bypasses the page event pipeline).
     // Falls back to direct DOM dispatch if IPC is unavailable.
     if (_ipc) {
-      var map = {
-        q: { keyCode: 81, code: 'KeyQ', key: 'q' },
-        a: { keyCode: 65, code: 'KeyA', key: 'a' },
-        d: { keyCode: 68, code: 'KeyD', key: 'd' },
-      };
-      var m = map[key];
+      var m = _KEY_CODES[key];
       if (m) {
         try { _ipc.send('dawn-bhop-key', { type: down ? 'keyDown' : 'keyUp', keyCode: m.keyCode, code: m.code, key: m.key }); return; } catch (e) {}
       }
@@ -173,7 +176,8 @@ function installBhopHook(capCheck) {
       _qDownPhys = false; _postKey('q', false); _phase = 2;
     } else if (_phase === 2) {
       _qDownPhys = true; _postKey('q', true);
-      _pulseStrafe();
+      // NOTE: strafe is driven by the decoupled _strafeSwitch timer (air-control),
+      // not here — calling _pulseStrafe() too would double-flip the direction.
       _phase = 1;
     }
     _rAFId = requestAnimationFrame(_tick);

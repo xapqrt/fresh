@@ -190,7 +190,6 @@ const createWindow = () => {
 
   gameWindow.once("ready-to-show", () => {
     clearTimeout(showFallback);
-    try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
     if (process.platform === "darwin" && settings.auto_fullscreen) {
       gameWindow.setFullScreen(true);
     }
@@ -212,7 +211,8 @@ const createWindow = () => {
         if (gpuPid) try { os.setPriority(gpuPid, -12); } catch (e) {}
       }
       // Renderer pid (this window's content process) — keep input snappy.
-      try { os.setPriority(gameWindow.webContents.getProcessId(), -8); } catch (e) {}
+      // Use -10 (aggressive) consistently; do NOT downgrade to -8 after.
+      try { os.setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
     } catch (e) {}
     gameWindow.show();
   });
