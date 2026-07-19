@@ -45,51 +45,6 @@ installBhopHook();
 installRecorder();
 require("../addons/Custom Skin Link");
 
-// Constant frame-rate clamp. macOS CVDisplayLink + the WebGL swap eats a few Hz
-// off the panel's 240Hz vsync, so the game lands at ~235. Wrap requestAnimationFrame
-// and pace the callback to exactly fps_cap (default 240) so the game loop runs at a
-// rock-constant 240 regardless of compositor jitter. This does NOT disable vsync
-// (the autoloop hard rule) — it just re-times the existing rAF callbacks.
-(() => {
-  let fpsCap = 240;
-  try {
-    const fs = require("fs");
-    const path = require("path");
-    const ud = (require("electron").app && require("electron").app.getPath)
-      ? require("electron").app.getPath("userData")
-      : path.join(require("os").homedir(), "Library/Application Support/Dawn Client");
-    const cfg = JSON.parse(fs.readFileSync(path.join(ud, "config.json"), "utf-8"));
-    const c = (cfg && cfg.settings) ? cfg.settings.fps_cap : (cfg && cfg.fps_cap);
-    if (typeof c === "number" && c > 0) fpsCap = c;
-  } catch (e) {}
-  if (fpsCap <= 0) return;
-
-  const frameMs = 1000 / fpsCap;
-  const _raf = window.requestAnimationFrame.bind(window);
-  let last = 0;
-  let pending = null;
-  let timer = null;
-  const schedule = (cb, now) => {
-    const wait = Math.max(0, frameMs - (now - last));
-    timer = setTimeout(() => {
-      last = performance.now();
-      pending = null;
-      _raf(cb);
-    }, wait);
-  };
-  window.requestAnimationFrame = (cb) => {
-    if (pending !== null) return 0; // coalesce to one pending frame per interval
-    pending = cb;
-    schedule(cb, performance.now());
-    return 1;
-  };
-  if (window.webkitRequestAnimationFrame) {
-    window.webkitRequestAnimationFrame = window.requestAnimationFrame;
-  }
-  // Force the cap to apply even if the page cached the original rAF reference.
-  try { Object.defineProperty(window, "requestAnimationFrame", { writable: false, configurable: false }); } catch (e) {}
-})();
-
 const installFpsOverlay = () => {
   let enabled = false;
   let rafId = null;
