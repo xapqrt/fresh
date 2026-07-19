@@ -18,6 +18,15 @@ applySwitches();
 app.on("ready", async () => {
   initSplash();
   try { require("os").setPriority(process.pid, -10); } catch (e) {}
+  // macOS: disable App Nap / sudden termination so the game process is never
+  // throttled or suspended (kills the "laggy after a few matches" symptom).
+  try {
+    if (process.platform === "darwin") {
+      const { app: electronApp } = require("electron");
+      if (electronApp.disableAppNap) electronApp.disableAppNap("Dawn Client is a game");
+      if (electronApp.disableSuddenTermination) electronApp.disableSuddenTermination();
+    }
+  } catch (e) {}
   globalShortcut.register("F8", () => {
     const gw = getGameWindow();
     if (gw && !gw.isDestroyed()) gw.webContents.send("toggle-menu");

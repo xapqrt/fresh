@@ -78,6 +78,12 @@ function applySwitches() {
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");
 
+  app.commandLine.appendSwitch("disable-gpu-watchdog");   // prevent GPU process reset after sustained load (lag after several matches)
+  app.commandLine.appendSwitch("disable-hang-monitor");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+
   app.allowRendererProcessReuse = true;
 }
 
