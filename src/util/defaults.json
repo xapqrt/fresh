@@ -69,6 +69,8 @@
     "advanced_css": "",
     "in_process_gpu": false,
     "use_angle_opengl": false,
+    "use_angle_metal": false,
+    "fps_cap": 240,
     "show_installable": false,
     "menu_keybind": "ShiftRight",
     "inspect_duration": "700",

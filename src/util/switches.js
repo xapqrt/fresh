@@ -7,6 +7,7 @@ function applySwitches() {
   let in_process_gpu = false;
   let use_angle_opengl = false;
   let use_angle_metal = false;
+  let fps_cap = 0;
   try {
     const configPath = path.join(app.getPath("userData"), "config.json");
     if (fs.existsSync(configPath)) {
@@ -15,6 +16,7 @@ function applySwitches() {
         in_process_gpu = !!stored.settings.in_process_gpu;
         use_angle_opengl = !!stored.settings.use_angle_opengl;
         use_angle_metal = !!stored.settings.use_angle_metal;
+        fps_cap = parseInt(stored.settings.fps_cap, 10) || 0;
       }
       // also accept top-level keys (config.json is sometimes written flat)
       if (stored && typeof stored.use_angle_metal === "boolean") {
@@ -22,6 +24,9 @@ function applySwitches() {
       }
       if (stored && typeof stored.in_process_gpu === "boolean") {
         in_process_gpu = stored.in_process_gpu;
+      }
+      if (stored && typeof stored.fps_cap === "number") {
+        fps_cap = stored.fps_cap;
       }
     }
   } catch (e) {}
@@ -69,7 +74,7 @@ function applySwitches() {
   app.commandLine.appendSwitch("touch-events", "disabled");
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache");
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=2048 --expose-gc");
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=2048 --expose-gc --optimize-for-size");
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");
 

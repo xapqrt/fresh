@@ -1,10 +1,17 @@
-const { app, ipcMain, globalShortcut } = require("electron");
+const { app, ipcMain, globalShortcut, protocol } = require("electron");
 const { initSplash } = require("./windows/splash");
 const { getGameWindow } = require("./windows/game");
 const { applySwitches } = require("./util/switches");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+// Allow the app shell (https + dawn-patch) to load without CSP/storage blocks.
+// Without this, the login page renders blank and auth never completes.
+protocol.registerSchemesAsPrivileged([
+  { scheme: "https", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true } },
+  { scheme: "dawn-patch", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true } },
+]);
 
 applySwitches();
 

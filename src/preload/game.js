@@ -1,6 +1,32 @@
 const { ipcRenderer } = require("electron");
 const os = require("os");
 
+// Polyfill Array/String.prototype.at — Chromium 89 (Electron 12) lacks it,
+// but kirka.io's bundle uses it heavily (e.g. t.entries.at(...)). Without this
+// the login/session code throws "x.at is not a function" and the page is dead.
+if (typeof Array.prototype.at !== "function") {
+  Object.defineProperty(Array.prototype, "at", {
+    value: function (i) {
+      const len = this.length >>> 0;
+      const idx = i >= 0 ? i : len + i;
+      return idx >= 0 && idx < len ? this[idx] : undefined;
+    },
+    writable: true,
+    configurable: true,
+  });
+}
+if (typeof String.prototype.at !== "function") {
+  Object.defineProperty(String.prototype, "at", {
+    value: function (i) {
+      const len = this.length >>> 0;
+      const idx = i >= 0 ? i : len + i;
+      return idx >= 0 && idx < len ? this[idx] : undefined;
+    },
+    writable: true,
+    configurable: true,
+  });
+}
+
 try { os.setPriority(process.pid, -10); } catch (e) {}
 
 let settings = ipcRenderer.sendSync("get-settings");
