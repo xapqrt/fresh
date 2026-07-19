@@ -52,22 +52,20 @@ const initResourceSwapper = () => {
     fs.readdirSync(dir).forEach((file) => {
       const filePath = path.join(dir, file);
       if (fs.statSync(filePath).isDirectory()) allFilesSync(filePath);
-      else {
-        const useAssets = folder_regex.test(filePath);
-        if (!useAssets) return;
+      else if (folder_regex.test(filePath)) {
+        const relPath = filePath.replace(SWAP_FOLDER, "").replace(/\\/g, "/");
+        const fileURL = url.format({ pathname: filePath, protocol: "", slashes: false });
 
         proxyUrls.forEach((proxy) => {
-          const kirk = `*://${proxy}${filePath.replace(SWAP_FOLDER, "").replace(/\\/g, "/")}*`;
-          const origfilterurl = kirk.match(/\/[^\/]+\.(?:[a-zA-Z0-9]+)\*/gi)[0];
+          const kirk = `*://${proxy}${relPath}*`;
+          const origMatch = kirk.match(/\/[^\/]+\.(?:[a-zA-Z0-9]+)\*/);
+          if (!origMatch) return;
+          const origfilterurl = origMatch[0];
           let filterurl = origfilterurl.replace(/\_/g, "");
           filterurl = filterurl.replace("/", "/*");
           filterurl = filterurl.replace(".", "*.*");
           swap.filter.urls.push(kirk.replace(origfilterurl, filterurl));
-          swap.files[kirk.replace(/\*|_/g, "")] = url.format({
-            pathname: filePath,
-            protocol: "",
-            slashes: false,
-          });
+          swap.files[`://${proxy}${relPath}`.replace(/_/g, "")] = fileURL;
         });
       }
     });

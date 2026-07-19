@@ -1,6 +1,24 @@
 let git_base = "Cheeseybowrger";
 const opener_list = "https://raw.githubusercontent.com/zVipexx/dawn-client/refs/heads/main/openerlist.json";
 
+let _translationsPromise = null;
+const _getTranslations = async () => {
+  if (_translationsPromise) return _translationsPromise;
+  _translationsPromise = (async () => {
+    const res = await fetch(
+      `https://raw.githubusercontent.com/${git_base}/KirkaScripts/refs/heads/main/ConsoleScripts/microwaves.json`,
+    );
+    const translations = await res.json();
+    Object.keys(translations).forEach((item) => {
+      const translationItem = translations[item];
+      translations[translationItem] = item;
+    });
+    window.__openerTranslations = translations;
+    return translations;
+  })();
+  return _translationsPromise;
+};
+
 async function fetchOpenerList() {
   const res = await fetch(opener_list);
   if (!res.ok) {
@@ -72,18 +90,7 @@ async function executeCardScript(customcardlist) {
     DEFAULT: "ffffff",
   };
 
-  if (!window.__openerTranslations) {
-    let translations_req = await fetch(
-      `https://raw.githubusercontent.com/${git_base}/KirkaScripts/refs/heads/main/ConsoleScripts/microwaves.json`,
-    );
-    let translations = await translations_req.json();
-    Object.keys(translations).forEach((item) => {
-      let translationItem = translations[item];
-      translations[translationItem] = item;
-    });
-    window.__openerTranslations = translations;
-  }
-  let translations = window.__openerTranslations;
+  let translations = await _getTranslations();
 
   //This code logs credits
   function logCredits() {
@@ -431,6 +438,8 @@ async function executeCardScript(customcardlist) {
   let counter = 0;
   let interval = setInterval(async () => {
     let cardresult = await openCard(cards[counter]["cardid"]);
+    let resultName = cardresult[translations["name"]];
+    let resultRarity = cardresult[translations["rarity"]];
     if (resultName) {
       ingameShowcase(resultName, resultRarity, cards[counter]["name"]);
 
@@ -516,18 +525,7 @@ async function executeChestScript(customchestlist) {
     DEFAULT: "ffffff",
   };
 
-  if (!window.__openerTranslations) {
-    let translations_req = await fetch(
-      `https://raw.githubusercontent.com/${git_base}/KirkaScripts/refs/heads/main/ConsoleScripts/microwaves.json`,
-    );
-    let translations = await translations_req.json();
-    Object.keys(translations).forEach((item) => {
-      let translationItem = translations[item];
-      translations[translationItem] = item;
-    });
-    window.__openerTranslations = translations;
-  }
-  let translations = window.__openerTranslations;
+  let translations = await _getTranslations();
 
   //This code logs credits
   function logCredits() {

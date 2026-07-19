@@ -8,22 +8,39 @@ function applySwitches() {
   let use_angle_opengl = false;
   let use_angle_metal = false;
   let fps_cap = 0;
+  let hasExplicitInProcessGpu = false;
+  let hasExplicitAngleMetal = false;
+  let forceMetal = false;
   try {
     const configPath = path.join(app.getPath("userData"), "config.json");
     if (fs.existsSync(configPath)) {
       const stored = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       if (stored && stored.settings) {
-        in_process_gpu = !!stored.settings.in_process_gpu;
+        if (typeof stored.settings.in_process_gpu === "boolean") {
+          in_process_gpu = stored.settings.in_process_gpu;
+          hasExplicitInProcessGpu = true;
+        }
         use_angle_opengl = !!stored.settings.use_angle_opengl;
-        use_angle_metal = !!stored.settings.use_angle_metal;
+        if (typeof stored.settings.use_angle_metal === "boolean") {
+          use_angle_metal = stored.settings.use_angle_metal;
+          hasExplicitAngleMetal = true;
+        }
+        if (typeof stored.settings.forceMetal === "boolean") {
+          forceMetal = stored.settings.forceMetal;
+        }
         fps_cap = parseInt(stored.settings.fps_cap, 10) || 0;
       }
       // also accept top-level keys (config.json is sometimes written flat)
       if (stored && typeof stored.use_angle_metal === "boolean") {
         use_angle_metal = stored.use_angle_metal;
+        hasExplicitAngleMetal = true;
       }
       if (stored && typeof stored.in_process_gpu === "boolean") {
         in_process_gpu = stored.in_process_gpu;
+        hasExplicitInProcessGpu = true;
+      }
+      if (stored && typeof stored.forceMetal === "boolean") {
+        forceMetal = stored.forceMetal;
       }
       if (stored && typeof stored.fps_cap === "number") {
         fps_cap = stored.fps_cap;
@@ -31,11 +48,19 @@ function applySwitches() {
     }
   } catch (e) {}
 
-  // NOTE: ANGLE-Metal is gated behind stored.settings.use_angle_metal (default false).
-  // On Electron 12 / Apple Silicon it can cause
-  // 'glBindTexture: target was GL_TEXTURE_RECTANGLE_ARB' + 'failed to create surface'
-  // GL errors -> splash stuck on blue screen. Enable only by setting
-  // "use_angle_metal":true in config.json (no rebuild needed).
+  // Machine-model gating: default Metal + in-process-gpu ON for non-M4 Apple
+  // Silicon. M4 machines have a known blue-screen / stuck-on-splash risk with
+  // ANGLE Metal on Electron 12 (surface-creation failures). The user can still
+  // override via config.json.
+  // forceMetal=true bypasses the M4 exclusion (user opt-in for M4).
+  if (process.platform === "darwin") {
+    const cpuModel = (os.cpus()[0]?.model) || "";
+    const isM4 = /M4/.test(cpuModel);
+    if (!isM4 || forceMetal) {
+      if (!hasExplicitAngleMetal) use_angle_metal = true;
+      if (!hasExplicitInProcessGpu) in_process_gpu = true;
+    }
+  }
 
   app.commandLine.appendSwitch("high-dpi-support", "1");
   app.commandLine.appendSwitch("ignore-gpu-blocklist");
@@ -59,6 +84,8 @@ function applySwitches() {
     app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks");
   }
   app.commandLine.appendSwitch("force-color-profile", "srgb");
+  app.commandLine.appendSwitch("renderer-process-limit", "1");
+  app.commandLine.appendSwitch("max-active-webgl-contexts", "1");
   app.commandLine.appendSwitch("canvas-msaa-sample-count", "0");
 
   if (in_process_gpu) {

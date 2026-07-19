@@ -17,7 +17,7 @@ applySwitches();
 
 app.on("ready", async () => {
   initSplash();
-  try { require("os").setPriority(process.pid, -10); } catch (e) {}
+  try { if (process.platform === "darwin") require("os").setPriority(process.pid, -10); } catch (e) {}
   // macOS: disable App Nap / sudden termination so the game process is never
   // throttled or suspended (kills the "laggy after a few matches" symptom).
   try {

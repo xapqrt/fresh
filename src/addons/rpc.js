@@ -3,11 +3,26 @@ const { version } = require("../../package.json");
 
 class DiscordRPC {
   constructor() {
+    if (DiscordRPC._instance) return DiscordRPC._instance;
+    DiscordRPC._instance = this;
     this.clientId = "1384959605712355479";
     this.startTimestamp = Date.now();
     this.client = new rpc.Client({ transport: "ipc" });
     this._retryDelay = 5000;
+    this._reconnectTimer = null;
     this.init();
+  }
+
+  destroy() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    try {
+      this.client.destroy();
+    } catch (e) {
+      /* already closed */
+    }
   }
 
   init() {

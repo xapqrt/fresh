@@ -46,6 +46,7 @@ let _hooked = false;
 let _lastClearMask = 0;
 let _lastBoundTexture = null;
 const _lastRgbUpload = new Uint8Array(4);
+const _lastRgbU32 = new Uint32Array(_lastRgbUpload.buffer, _lastRgbUpload.byteOffset, 1);
 let _rgbFrameCount = 0;
 
 let _inspectStart = null;
@@ -150,6 +151,9 @@ const _installWrappers = (gl) => {
       _lastDrawCall = dc;
       _tomahawkCount = 0;
     }
+    if ((_drawCallCount & 0x3FF) === 0) {
+      _bloomGen++;
+    }
 
     if (_lastClearMask !== 256) {
       return origUniform4(location, transpose, data, srcOffset, srcLength);
@@ -189,20 +193,18 @@ const _installWrappers = (gl) => {
           if (_rgbFrameCount++ % 3 === 0) {
             const buf = hsvToRgb((performance.now() / 3000) * 360);
             _rgbPixel[0] = buf[0]; _rgbPixel[1] = buf[1]; _rgbPixel[2] = buf[2]; _rgbPixel[3] = 255;
-            _lastRgbUpload[0] = _rgbPixel[0];
-            _lastRgbUpload[1] = _rgbPixel[1];
-            _lastRgbUpload[2] = _rgbPixel[2];
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
+            const newU32 = (_rgbPixel[0] << 0) | (_rgbPixel[1] << 8) | (_rgbPixel[2] << 16) | (_rgbPixel[3] << 24);
+            if (newU32 !== _lastRgbU32[0]) {
+              _lastRgbU32[0] = newU32;
+              gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
+            }
           }
         } else {
           _parseHexCached(wc.colorHex, _rgbPixel);
-          if (_rgbPixel[0] !== _lastRgbUpload[0] ||
-              _rgbPixel[1] !== _lastRgbUpload[1] ||
-              _rgbPixel[2] !== _lastRgbUpload[2]) {
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
-            _lastRgbUpload[0] = _rgbPixel[0];
-            _lastRgbUpload[1] = _rgbPixel[1];
-            _lastRgbUpload[2] = _rgbPixel[2];
+          const newU32 = (_rgbPixel[0] << 0) | (_rgbPixel[1] << 8) | (_rgbPixel[2] << 16) | (_rgbPixel[3] << 24);
+          if (newU32 !== _lastRgbU32[0]) {
+            _lastRgbU32[0] = newU32;
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, _rgbPixel);
           }
         }
       } else {

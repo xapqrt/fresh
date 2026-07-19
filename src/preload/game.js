@@ -39,10 +39,8 @@ if (!window.location.href.startsWith(base_url)) {
 }
 
 const { installBhopHook } = require("./game/bhop");
-const { installRecorder } = require("./game/recorder");
 
 installBhopHook();
-installRecorder();
 require("../addons/Custom Skin Link");
 
 // (TEST BUILD) Re-enable the full Dawn menu (Discord RPC, gallery, resource

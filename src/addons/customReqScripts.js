@@ -1,6 +1,12 @@
 // from CarrySheriff!
 
 const customReqScripts = (settings) => {
+  if (window.__customReqPatched) return;
+  const _isTargetPage = () =>
+    window.location.href === `${settings.base_url}inventory` ||
+    window.location.href === `${settings.base_url}hub/market`;
+  if (!_isTargetPage()) return;
+  window.__customReqPatched = true;
   const originalXHR = window.XMLHttpRequest;
   const { base_url, custom_list_price, market_names } = settings;
   let ids = [];

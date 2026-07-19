@@ -1,7 +1,7 @@
 var _ipc = null;
 try { _ipc = require('electron').ipcRenderer; } catch (e) { }
 
-function installBhopHook(capCheck) {
+function installBhopHook() {
   var _shiftDown = false;
   var _qDown = false;
   var _bhopOn = false;
@@ -131,8 +131,6 @@ function installBhopHook(capCheck) {
 
   function _tick(now) {
     if (!_bhopOn) { _rAFId = null; return; }
-
-    if (capCheck && !capCheck(now)) { _rAFId = requestAnimationFrame(_tick); return; }
 
     // Decoupled strafe switching (air-control), runs on its own cadence.
     if (_strafeKey && (now - _lastStrafeSwitch) >= _strafeSwitchMs) {
