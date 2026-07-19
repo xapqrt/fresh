@@ -45,6 +45,26 @@ installBhopHook();
 installRecorder();
 require("../addons/Custom Skin Link");
 
+// (TEST BUILD) Re-enable the full Dawn menu (Discord RPC, gallery, resource
+// swapper, auto-opener, userscripts, screenrec UI). The Menu class injects its
+// own HTML, so it's safe to instantiate once the page document exists.
+// Lazy-init on DOMContentLoaded to avoid null-querySelector at preload time.
+(function initDawnMenu() {
+  let inst = null;
+  const boot = () => {
+    if (inst) return;
+    try {
+      const Menu = require("./menu");
+      inst = new Menu();
+      console.log("[menu] initialized");
+    } catch (e) {
+      console.error("[menu] init failed:", e);
+    }
+  };
+  if (document.readyState === "complete" || document.readyState === "interactive") boot();
+  else document.addEventListener("DOMContentLoaded", boot, { once: true });
+})();
+
 const installFpsOverlay = () => {
   let enabled = false;
   let rafId = null;
