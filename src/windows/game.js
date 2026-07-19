@@ -145,6 +145,9 @@ const createWindow = () => {
       sandbox: false,
       webSecurity: false,
       nativeWindowOpen: true,
+      // Never throttle input/raf when Chromium thinks the window is
+      // "occluded" or not frontmost — keeps mouse input snappy.
+      backgroundThrottling: false,
       preload: path.join(__dirname, "../preload/game.js"),
     },
   });

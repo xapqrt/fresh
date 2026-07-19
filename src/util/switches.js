@@ -51,7 +51,7 @@ function applySwitches() {
   const rasterThreads = Math.min(os.cpus().length, 4);
   app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
   if (process.platform === "darwin") {
-    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,ScreenCaptureKit,AsyncWheelEvents");
+    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,ScreenCaptureKit,AsyncWheelEvents,VizDisplayCompositor");
     app.commandLine.appendSwitch("enable-gpu-memory-buffer-video-frames");
   } else {
     app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks");
@@ -70,7 +70,11 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-background-timer-throttling");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
-  app.commandLine.appendSwitch("enable-coalesced-mouse");
+  // NOTE: do NOT enable coalesced mouse events — macOS batches/averages pointer
+  // moves between frames, which adds aim latency in a fast FPS. Deliver raw,
+  // un-batched mouse moves for the snappiest input.
+  app.commandLine.appendSwitch("disable-features",
+    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache,CoalescedMouseEvent");
   app.commandLine.appendSwitch("touch-events", "disabled");
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache");
