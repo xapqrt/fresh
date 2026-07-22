@@ -1,6 +1,4 @@
 const { app, ipcMain, globalShortcut, protocol } = require("electron");
-const { initSplash } = require("./windows/splash");
-const { getGameWindow } = require("./windows/game");
 const { applySwitches } = require("./util/switches");
 const fs = require("fs");
 const path = require("path");
@@ -17,8 +15,10 @@ protocol.registerSchemesAsPrivileged([
 applySwitches();
 
 
+const { initGame, getGameWindow } = require("./windows/game");
+
 app.on("ready", async () => {
-  initSplash();
+  initGame();
   try { require("os").setPriority(process.pid, -10); } catch (e) {}
   // macOS: disable App Nap / sudden termination so the game process is never
   // throttled or suspended (kills the "laggy after a few matches" symptom).

@@ -314,39 +314,20 @@ const createWindow = () => {
   gameWindow.removeMenu();
   gameWindow.loadURL(settings.base_url);
   gameWindow.maximize();
-
-  // Show the window as soon as the DOM is ready (2-3s) so kirka's own loading
-  // screen is visible immediately. Previously waiting for ready-to-show caused
-  // a 20s black screen because ready-to-show fires after the full JS bundle
-  // loads and executes.
-  gameWindow.webContents.once("dom-ready", () => {
-    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
-      try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
-      if (process.platform === "darwin" && settings.auto_fullscreen) {
-        gameWindow.setFullScreen(true);
-      }
-      gameWindow.show();
-    }
-  });
-
-  // Fallback: show after 5s no matter what
-  const showFallback = setTimeout(() => {
-    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
-      if (process.platform === "darwin" && settings.auto_fullscreen) {
-        gameWindow.setFullScreen(true);
-      }
-      gameWindow.show();
-    }
-  }, 5000);
+  gameWindow.show();
 
   gameWindow.once("ready-to-show", () => {
-    clearTimeout(showFallback);
-    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
-      try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
-      if (process.platform === "darwin" && settings.auto_fullscreen) {
-        gameWindow.setFullScreen(true);
-      }
-      gameWindow.show();
+    try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
+    if (process.platform === "darwin" && settings.auto_fullscreen) {
+      gameWindow.setFullScreen(true);
+    }
+    try {
+      var dbg = gameWindow.webContents.debugger;
+      dbg.attach('1.3');
+      _bhopDebugger = dbg;
+    } catch (e) {
+      console.warn('[bhop] CDP attach failed, using synthetic fallback:', e.message);
+      _bhopDebugger = null;
     }
   });
 
@@ -355,11 +336,19 @@ const createWindow = () => {
   gameWindow.on("close", () => {
     if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
     _bhopS = null;
+    if (_bhopDebugger) {
+      try { _bhopDebugger.detach(); } catch (e) {}
+      _bhopDebugger = null;
+    }
   });
 
   gameWindow.on("closed", () => {
     if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
     _bhopS = null;
+    if (_bhopDebugger) {
+      try { _bhopDebugger.detach(); } catch (e) {}
+      _bhopDebugger = null;
+    }
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
     ipcMain.removeAllListeners("save-recording");
