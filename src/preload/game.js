@@ -29,6 +29,15 @@ if (typeof String.prototype.at !== "function") {
 
 try { os.setPriority(process.pid, -10); } catch (e) {}
 
+// Force raw, unadjusted mouse movement (bypassing OS mouse acceleration) when pointer lock is requested
+if (typeof Element.prototype.requestPointerLock === "function") {
+  const _origReqPL = Element.prototype.requestPointerLock;
+  Element.prototype.requestPointerLock = function (options) {
+    const opts = Object.assign({}, options, { unadjustedMovement: true });
+    return _origReqPL.call(this, opts).catch(() => _origReqPL.call(this, options));
+  };
+}
+
 let settings = ipcRenderer.sendSync("get-settings");
 const base_url = settings.base_url;
 
