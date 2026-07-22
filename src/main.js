@@ -38,14 +38,17 @@ app.on("ready", async () => {
 });
 
 app.on("child-process-gone", (_, details) => {
-  if (details.type === "GPU") {
-    try {
-      const { getGameWindow } = require("./windows/game");
-      const gw = getGameWindow();
-      if (gw && !gw.isDestroyed()) {
-        gw.loadURL(gw.webContents.getURL() || "https://kirka.io/");
-      }
-    } catch (e) {}
+  console.error(`[main] child-process-gone: type=${details.type} reason=${details.reason}`);
+  if (details.type !== "GPU") return;
+  try {
+    const gw = getGameWindow();
+    if (gw && !gw.isDestroyed()) {
+      const url = gw.webContents.getURL();
+      console.error(`[main] GPU crash — reloading ${url}`);
+      gw.loadURL(url || "https://kirka.io/");
+    }
+  } catch (e) {
+    console.error("[main] GPU crash recovery failed:", e);
   }
 });
 

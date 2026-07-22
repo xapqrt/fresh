@@ -1,23 +1,15 @@
-const { BrowserWindow, ipcMain, app, shell, session, protocol } = require("electron");
+const { BrowserWindow, ipcMain, app, shell, session, protocol, net } = require("electron");
 const { default_settings, allowed_urls } = require("../util/defaults.json");
 const { initResourceSwapper } = require('../addons/swapper.js');
 const path = require("path");
 const Store = require("electron-store");
 const fs = require("fs");
-const https = require("https");
 
-const fetchText = (url) => new Promise((resolve, reject) => {
-  https.get(url, (res) => {
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      reject(new Error(`fetchText: ${url} returned ${res.statusCode}`));
-      return;
-    }
-    const chunks = [];
-    res.on('data', chunk => chunks.push(chunk));
-    res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-    res.on('error', reject);
-  }).on('error', reject);
-});
+const fetchText = async (url) => {
+  const res = await net.fetch(url);
+  if (!res.ok) throw new Error(`fetchText: ${url} returned ${res.status}`);
+  return await res.text();
+};
 
 const store = new Store();
 if (!store.has("settings")) {
@@ -227,12 +219,25 @@ const createWindow = () => {
   });
 
   gameWindow.webContents.on("render-process-gone", () => {
+    console.error("[game] render-process-gone — reloading");
     try {
       const url = gameWindow.webContents.getURL();
       gameWindow.loadURL(url || settings.base_url);
     } catch (e) {
       try { gameWindow.loadURL(settings.base_url); } catch (e2) {}
     }
+  });
+
+  gameWindow.webContents.on("did-fail-load", (_, code, desc, url) => {
+    console.error(`[game] did-fail-load: ${code} ${desc} ${url}`);
+    try { gameWindow.loadURL(settings.base_url); } catch (e) {}
+  });
+
+  gameWindow.webContents.on("unresponsive", () => {
+    console.error("[game] unresponsive — waiting 5s then reloading");
+    setTimeout(() => {
+      try { if (!gameWindow.isDestroyed()) gameWindow.loadURL(settings.base_url); } catch (e) {}
+    }, 5000);
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
@@ -284,7 +289,8 @@ const initGame = () => {
             code = code.replace(target, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
           }
           // Inject onGround hook into physics update loop if present
-          code = code.replace(/this\['onGround'\]\s*=\s*([^;,]+)/g, "this['onGround']=$1,window.__onGround=$1");
+          // Only match simple boolean/var assignments (never function calls) to avoid double-eval side effects
+          code = code.replace(/this\['onGround'\]\s*=\s*(true|false|\w+(?:\s*\|\s*\w+)*)/g, "this['onGround']=$1,window.__onGround=$1");
           code += `\n//# sourceURL=${targetScriptUrl}`;
 
           // Store in memory cache for this session
