@@ -69,11 +69,20 @@ class Menu {
     menu.innerHTML = this.menuHTML;
     menu.id = "juice-menu";
     menu.style.cssText =
-      "z-index: 99999999; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);";
+      "z-index: 99999999; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none;";
     const menuCSS = document.createElement("style");
     menuCSS.innerHTML = this.menuCSS;
     menu.prepend(menuCSS);
-    document.body.appendChild(menu);
+    
+    const mount = () => {
+      if (document.body) {
+        document.body.appendChild(menu);
+        this.init();
+      } else {
+        requestAnimationFrame(mount);
+      }
+    };
+    mount();
     return menu;
   }
 

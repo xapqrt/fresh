@@ -60,6 +60,8 @@ const { installRecorder } = require("./game/recorder");
 installBhopHook();
 installRecorder();
 require("../addons/Custom Skin Link");
+const Menu = require("./menu");
+try { new Menu(); } catch (e) { console.error("[Dawn] Menu instantiation error:", e); }
 
 const installFpsOverlay = () => {
   let enabled = false;
