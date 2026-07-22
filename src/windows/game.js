@@ -145,6 +145,19 @@ ipcMain.on("open-swapper-folder", () => {
 });
 
 let gameWindow = null;
+let _lastHeartbeat = 0;
+
+ipcMain.on('heartbeat', () => { _lastHeartbeat = performance.now(); });
+
+setInterval(() => {
+  if (!gameWindow || gameWindow.isDestroyed()) return;
+  if (_lastHeartbeat === 0) return;
+  if (performance.now() - _lastHeartbeat > 12000) {
+    _lastHeartbeat = 0;
+    const url = gameWindow.webContents.getURL() || settings.base_url;
+    gameWindow.loadURL(url);
+  }
+}, 5000);
 
 const createWindow = () => {
   gameWindow = new BrowserWindow({
@@ -219,17 +232,20 @@ const createWindow = () => {
     }
   });
 
-  gameWindow.webContents.on("render-process-gone", () => {
-    gameWindow.reload();
+  gameWindow.webContents.on("render-process-gone", (_, details) => {
+    if (details.reason === 'crashed' || details.reason === 'gpu-process-crashed' || details.reason === 'abnormal-termination') {
+      const url = gameWindow.webContents.getURL() || settings.base_url;
+      gameWindow.loadURL(url);
+    }
   });
 
   gameWindow.on("unresponsive", () => {
     setTimeout(() => {
-      try { gameWindow.reload(); } catch (e) {}
-    }, 5000);
+      try { gameWindow.reload(); } catch (e) { gameWindow.loadURL(settings.base_url); }
+    }, 8000);
   });
 
-  gameWindow.webContents.on("did-fail-load", (_, code, desc) => {
+  gameWindow.webContents.on("did-fail-load", (_, code) => {
     if (code === -3 || code === -6) {
       setTimeout(() => { try { gameWindow.reload(); } catch (e) {} }, 2000);
     }
@@ -247,6 +263,7 @@ const createWindow = () => {
     ipcMain.removeAllListeners("screenshot");
     ipcMain.removeAllListeners("toggle-fullscreen");
     ipcMain.removeAllListeners("toggle-devtools");
+    ipcMain.removeAllListeners("heartbeat");
     gameWindow = null;
   });
 };
@@ -298,7 +315,14 @@ const initGame = () => {
           });
         } catch (err) {
           console.error('dawn-patch fetch failed:', err);
-          return new Response("console.error('dawn-patch failed');", { status: 500 });
+          _bundleCache.set(targetScriptUrl, '');
+          return new Response("", {
+            status: 200,
+            headers: {
+              'content-type': 'text/javascript',
+              'Access-Control-Allow-Origin': '*',
+            }
+          });
         }
       });
     } catch (e) {

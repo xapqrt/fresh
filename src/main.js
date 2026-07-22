@@ -40,6 +40,16 @@ app.on("ready", async () => {
   });
 });
 
+app.on("child-process-gone", (_, details) => {
+  if (details.type === "GPU") {
+    const gw = getGameWindow();
+    if (gw && !gw.isDestroyed()) {
+      const url = gw.webContents.getURL() || "https://kirka.io/";
+      gw.loadURL(url);
+    }
+  }
+});
+
 app.on("before-quit", () => {
   globalShortcut.unregisterAll();
 });

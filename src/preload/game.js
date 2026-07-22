@@ -163,6 +163,7 @@ const _isMatch = (url) => {
 
 window.__inMatch = _isMatch(window.location.href);
 setInterval(() => { if (window.__inMatch === false && typeof global.gc === 'function') global.gc(true); }, 30000);
+setInterval(() => { ipcRenderer.send('heartbeat'); }, 2000);
 
 window.addEventListener("DOMContentLoaded", () => {
   // Instantiate Menu here — document.body now exists so all querySelector calls work

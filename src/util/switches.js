@@ -53,6 +53,11 @@ function applySwitches() {
     "ParallelDownloading");
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter");
+  // Prevent Chromium from permanently disabling GPU acceleration after repeated
+  // Metal GPU process crashes (common on Apple Silicon with heavy WebGL). Without
+  // this, Chrome gives up on the GPU after ~3 crashes and falls back to SwiftShader
+  // software rendering (2-5 FPS) until the app is restarted.
+  app.commandLine.appendSwitch("disable-gpu-process-crash-limit");
 
   // ─── V8 / JS ─────────────────────────────────────────────────────────────
   // Only safe, well-supported flags. --max-old-space-size gives the game
