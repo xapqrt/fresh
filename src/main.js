@@ -16,8 +16,6 @@ protocol.registerSchemesAsPrivileged([
 
 applySwitches();
 
-// Enable sandbox (required for contextIsolation in Electron 20+)
-app.enableSandbox();
 
 app.on("ready", async () => {
   initSplash();

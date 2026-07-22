@@ -48,20 +48,18 @@ if (typeof Element.prototype.requestPointerLock === "function") {
 let settings = ipcRenderer.sendSync("get-settings");
 const base_url = settings.base_url;
 
-if (!window.location.href.startsWith(base_url)) {
-  delete window.process;
-  delete window.require;
-  return;
-}
+// Only fully initialize on kirka pages — but do NOT return/delete require here
+// because the preload fires before navigation completes; window.location may still
+// be about:blank. Instead, we guard hook installation inside DOMContentLoaded.
+const _isKirkaPage = () => window.location.href.startsWith(base_url);
 
 const { installBhopHook } = require("./game/bhop");
 const { installRecorder } = require("./game/recorder");
+const Menu = require("./menu");
 
 installBhopHook();
 installRecorder();
 require("../addons/Custom Skin Link");
-const Menu = require("./menu");
-try { new Menu(); } catch (e) { console.error("[Dawn] Menu instantiation error:", e); }
 
 const installFpsOverlay = () => {
   let enabled = false;
@@ -167,6 +165,10 @@ window.__inMatch = _isMatch(window.location.href);
 setInterval(() => { if (window.__inMatch === false && typeof global.gc === 'function') global.gc(true); }, 30000);
 
 window.addEventListener("DOMContentLoaded", () => {
+  // Instantiate Menu here — document.body now exists so all querySelector calls work
+  if (_isKirkaPage()) {
+    try { window.__dawnMenu = new Menu(); } catch (e) { console.error("[Dawn] Menu init error:", e); }
+  }
   const s1 = document.createElement("style"); s1.id = "juice-styles-theme"; document.head.appendChild(s1);
   const s2 = document.createElement("style"); s2.id = "juice-styles-custom"; document.head.appendChild(s2);
   window.updateTheme = () => {

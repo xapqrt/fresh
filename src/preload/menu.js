@@ -62,6 +62,8 @@ class Menu {
     this.viewMode = "weapon";
     this.universalArmActive = false;
     this.updateGlobalWeaponConfig();
+    // init() must run after all properties above are set (tabToContentMap, etc.)
+    this.init();
   }
 
   createMenu() {
@@ -69,20 +71,12 @@ class Menu {
     menu.innerHTML = this.menuHTML;
     menu.id = "juice-menu";
     menu.style.cssText =
-      "z-index: 99999999; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none;";
+      "z-index: 99999999; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);";
     const menuCSS = document.createElement("style");
     menuCSS.innerHTML = this.menuCSS;
     menu.prepend(menuCSS);
-    
-    const mount = () => {
-      if (document.body) {
-        document.body.appendChild(menu);
-        this.init();
-      } else {
-        requestAnimationFrame(mount);
-      }
-    };
-    mount();
+    // document.body is guaranteed to exist — we are called from DOMContentLoaded
+    document.body.appendChild(menu);
     return menu;
   }
 

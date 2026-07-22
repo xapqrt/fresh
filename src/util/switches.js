@@ -43,7 +43,9 @@ function applySwitches() {
   app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
 
   if (process.platform === "darwin") {
-    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,ScreenCaptureKit,AsyncWheelEvents,VizDisplayCompositor");
+    // ScreenCaptureKit: native screen recorder; AsyncWheelEvents: smooth scroll
+    // Do NOT add VizDisplayCompositor here — it conflicts with Metal compositor on macOS
+    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,ScreenCaptureKit,AsyncWheelEvents");
     app.commandLine.appendSwitch("enable-gpu-memory-buffer-video-frames");
     if (use_angle_metal && !use_angle_opengl) {
       app.commandLine.appendSwitch("use-gl", "angle");
@@ -69,9 +71,11 @@ function applySwitches() {
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache,CoalescedMouseEvent");
   app.commandLine.appendSwitch("touch-events", "disabled");
 
-  // Modern V8 flags for Electron 28 (Node 18 / V8 12.0)
+  // V8 flags for Electron 28 (Node 18 / V8 12.x)
+  // Note: --sharedarraybuffer and --wasm-threads require Cross-Origin-Isolation headers
+  // which kirka.io does not set, so they'd be ignored or cause errors. Removed.
   app.commandLine.appendSwitch("js-flags",
-    "--max-old-space-size=4096 --sparkplug --turbo-fast-api-calls --memory-pressure-off --wasm-simd --wasm-threads --expose-gc --sharedarraybuffer");
+    "--max-old-space-size=4096 --sparkplug --turbo-fast-api-calls --memory-pressure-off --expose-gc");
 
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");
