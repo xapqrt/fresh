@@ -12,7 +12,20 @@ const initResourceSwapper = () => {
     try {
       protocol.handle("dawnclient", async (request) => {
         const filePath = request.url.replace(/^dawnclient:\/\//, "");
-        return net.fetch(pathToFileURL(filePath).toString());
+        try {
+          const res = await net.fetch(pathToFileURL(filePath).toString());
+          const headers = new Headers(res.headers);
+          headers.set("Access-Control-Allow-Origin", "*");
+          headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+          headers.set("Access-Control-Allow-Headers", "*");
+          return new Response(res.body, {
+            status: res.status,
+            statusText: res.statusText,
+            headers
+          });
+        } catch (err) {
+          return new Response("Not found", { status: 404 });
+        }
       });
     } catch (e) {
       console.warn("dawnclient protocol registration issue:", e.message);

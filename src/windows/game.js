@@ -326,14 +326,6 @@ const createWindow = () => {
     if (process.platform === "darwin" && settings.auto_fullscreen) {
       gameWindow.setFullScreen(true);
     }
-    try {
-      var dbg = gameWindow.webContents.debugger;
-      dbg.attach('1.3');
-      _bhopDebugger = dbg;
-    } catch (e) {
-      console.warn('[bhop] CDP attach failed, using synthetic fallback:', e.message);
-      _bhopDebugger = null;
-    }
     gameWindow.show();
   });
 
@@ -342,19 +334,11 @@ const createWindow = () => {
   gameWindow.on("close", () => {
     if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
     _bhopS = null;
-    if (_bhopDebugger) {
-      try { _bhopDebugger.detach(); } catch (e) {}
-      _bhopDebugger = null;
-    }
   });
 
   gameWindow.on("closed", () => {
     if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
     _bhopS = null;
-    if (_bhopDebugger) {
-      try { _bhopDebugger.detach(); } catch (e) {}
-      _bhopDebugger = null;
-    }
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
     ipcMain.removeAllListeners("save-recording");
@@ -388,7 +372,12 @@ const initGame = () => {
           code += `\n//# sourceURL=${targetScriptUrl}`;
           return new Response(code, {
             status: 200,
-            headers: { 'content-type': 'text/javascript' }
+            headers: {
+              'content-type': 'text/javascript',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+              'Access-Control-Allow-Headers': '*'
+            }
           });
         } catch (err) {
           console.error('dawn-patch fetch failed:', err);
