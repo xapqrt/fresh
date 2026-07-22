@@ -1,86 +1,69 @@
 const { app } = require("electron");
 const fs = require("fs");
 const path = require("path");
-const os = require("os");
 
 function applySwitches() {
-  let in_process_gpu = false;
-  let use_angle_opengl = false;
+  // Read optional overrides from config
   let use_angle_metal = false;
-  let fps_cap = 0;
+  let use_angle_opengl = false;
+  let in_process_gpu = false;
+
   try {
     const configPath = path.join(app.getPath("userData"), "config.json");
     if (fs.existsSync(configPath)) {
       const stored = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      if (stored && stored.settings) {
-        in_process_gpu = !!stored.settings.in_process_gpu;
-        use_angle_opengl = !!stored.settings.use_angle_opengl;
-        if (typeof stored.settings.use_angle_metal === "boolean") {
-          use_angle_metal = stored.settings.use_angle_metal;
-        }
-        fps_cap = parseInt(stored.settings.fps_cap, 10) || 0;
-      }
-      if (stored && typeof stored.use_angle_metal === "boolean") {
-        use_angle_metal = stored.use_angle_metal;
-      }
-      if (stored && typeof stored.in_process_gpu === "boolean") {
-        in_process_gpu = stored.in_process_gpu;
-      }
-      if (stored && typeof stored.fps_cap === "number") {
-        fps_cap = stored.fps_cap;
-      }
+      const s = stored?.settings || stored || {};
+      if (typeof s.use_angle_metal === "boolean") use_angle_metal = s.use_angle_metal;
+      if (typeof s.use_angle_opengl === "boolean") use_angle_opengl = s.use_angle_opengl;
+      if (typeof s.in_process_gpu === "boolean") in_process_gpu = s.in_process_gpu;
     }
   } catch (e) {}
 
-  app.commandLine.appendSwitch("high-dpi-support", "1");
-  app.commandLine.appendSwitch("ignore-gpu-blocklist");
-  app.commandLine.appendSwitch("enable-gpu-rasterization");
-  app.commandLine.appendSwitch("enable-zero-copy");
-  app.commandLine.appendSwitch("disable-gpu-vsync");
-  app.commandLine.appendSwitch("disable-frame-rate-limit");
+  // ─── GPU ───────────────────────────────────────────────────────────────────
+  // On macOS Apple Silicon, Chromium already picks Metal by default and runs
+  // at full GPU performance. Adding flags like --enable-gpu-rasterization,
+  // --enable-zero-copy, --ignore-gpu-blocklist or --num-raster-threads can
+  // CRASH the GPU process and cause Chromium to fall back to SwiftShader
+  // software rendering (~2-5 FPS). Do NOT add them unconditionally.
   
-  const rasterThreads = Math.min(os.cpus().length, 4);
-  app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
+  app.commandLine.appendSwitch("high-dpi-support", "1");
 
   if (process.platform === "darwin") {
-    // ScreenCaptureKit: native screen recorder; AsyncWheelEvents: smooth scroll
-    // Do NOT add VizDisplayCompositor here — it conflicts with Metal compositor on macOS
-    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,ScreenCaptureKit,AsyncWheelEvents");
-    app.commandLine.appendSwitch("enable-gpu-memory-buffer-video-frames");
+    // Only enable ANGLE explicitly if the user opted in via settings
     if (use_angle_metal && !use_angle_opengl) {
       app.commandLine.appendSwitch("use-gl", "angle");
       app.commandLine.appendSwitch("use-angle", "metal");
     }
-  } else {
-    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks");
   }
 
-  app.commandLine.appendSwitch("force-color-profile", "srgb");
-  app.commandLine.appendSwitch("canvas-msaa-sample-count", "0");
-
   if (in_process_gpu) {
+    // In-process GPU skips the GPU sandbox — useful for debugging only
     app.commandLine.appendSwitch("in-process-gpu");
   }
 
+  // ─── Throttling / backgrounding ─────────────────────────────────────────
+  // These are safe and prevent Chrome from throttling rAF/timers when the
+  // window is backgrounded or occluded.
   app.commandLine.appendSwitch("disable-background-timer-throttling");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
-  
-  // Single, unified disable-features list
+
+  // ─── Features ────────────────────────────────────────────────────────────
   app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache,CoalescedMouseEvent");
-  app.commandLine.appendSwitch("touch-events", "disabled");
+    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter");
 
-  // V8 flags for Electron 28 (Node 18 / V8 12.x)
-  // Note: --sharedarraybuffer and --wasm-threads require Cross-Origin-Isolation headers
-  // which kirka.io does not set, so they'd be ignored or cause errors. Removed.
-  app.commandLine.appendSwitch("js-flags",
-    "--max-old-space-size=4096 --sparkplug --turbo-fast-api-calls --memory-pressure-off --expose-gc");
+  // ─── V8 / JS ─────────────────────────────────────────────────────────────
+  // Only safe, well-supported flags. --max-old-space-size gives the game
+  // heap room. --sparkplug enables Sparkplug tier-1 JIT. --expose-gc lets us
+  // trigger GC between matches.
+  // Excluded (unsafe on kirka.io):
+  //   --sharedarraybuffer  (requires Cross-Origin-Isolation headers)
+  //   --wasm-threads       (same — kirka.io doesn't set COOP/COEP)
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --sparkplug --expose-gc");
 
+  // ─── Audio ───────────────────────────────────────────────────────────────
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");
 }
 
-module.exports = {
-  applySwitches,
-};
+module.exports = { applySwitches };

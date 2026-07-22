@@ -281,11 +281,15 @@ const createWindow = () => {
     },
   });
 
-  // Apply fps cap from settings (default 240)
-  try { gameWindow.setFrameRate(parseInt(settings.fps_cap, 10) || 240); } catch (e) {}
+  // IMPORTANT: Do NOT call setFrameRate() here.
+  // setFrameRate() is ONLY for off-screen rendering (OSR) mode.
+  // On a normal BrowserWindow it interferes with the macOS CADisplayLink
+  // VSync signal and causes the compositor to drop to ~2-5 FPS.
 
+  // Use the actual Chrome 120 UA (matching Electron 28's Chromium build).
+  // Chrome 89 UA causes kirka.io to serve an older JS bundle.
   gameWindow.webContents.setUserAgent(
-    `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36 Electron/12.2.3 DawnClient/${app.getVersion()}`
+    `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 DawnClient/${app.getVersion()}`
   );
 
   // Google / OAuth popups (window.open) must open IN-APP as real child windows
@@ -311,22 +315,39 @@ const createWindow = () => {
   gameWindow.loadURL(settings.base_url);
   gameWindow.maximize();
 
-  const showFallback = setTimeout(() => {
-    if (gameWindow && !gameWindow.isVisible()) {
+  // Show the window as soon as the DOM is ready (2-3s) so kirka's own loading
+  // screen is visible immediately. Previously waiting for ready-to-show caused
+  // a 20s black screen because ready-to-show fires after the full JS bundle
+  // loads and executes.
+  gameWindow.webContents.once("dom-ready", () => {
+    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
+      try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
       if (process.platform === "darwin" && settings.auto_fullscreen) {
         gameWindow.setFullScreen(true);
       }
       gameWindow.show();
     }
-  }, 10000);
+  });
+
+  // Fallback: show after 5s no matter what
+  const showFallback = setTimeout(() => {
+    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
+      if (process.platform === "darwin" && settings.auto_fullscreen) {
+        gameWindow.setFullScreen(true);
+      }
+      gameWindow.show();
+    }
+  }, 5000);
 
   gameWindow.once("ready-to-show", () => {
     clearTimeout(showFallback);
-    try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
-    if (process.platform === "darwin" && settings.auto_fullscreen) {
-      gameWindow.setFullScreen(true);
+    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
+      try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
+      if (process.platform === "darwin" && settings.auto_fullscreen) {
+        gameWindow.setFullScreen(true);
+      }
+      gameWindow.show();
     }
-    gameWindow.show();
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
@@ -354,6 +375,10 @@ const createWindow = () => {
   });
 };
 
+// In-memory bundle cache: key = original script URL, value = patched code string.
+// This prevents re-downloading the multi-MB kirka.io bundle on every navigation.
+const _bundleCache = new Map();
+
 let _patchProtocolRegistered = false;
 
 const initGame = () => {
@@ -364,19 +389,33 @@ const initGame = () => {
         const urlParams = new URL(request.url);
         const targetScriptUrl = urlParams.searchParams.get('url');
         try {
+          // Serve from memory cache if available (avoids 20s re-download per navigation)
+          if (_bundleCache.has(targetScriptUrl)) {
+            const cached = _bundleCache.get(targetScriptUrl);
+            return new Response(cached, {
+              status: 200,
+              headers: {
+                'content-type': 'text/javascript',
+                'Access-Control-Allow-Origin': '*',
+              }
+            });
+          }
+
           let code = await fetchText(targetScriptUrl);
           const target = "f5['a'][hF]";
           if (code.includes(target)) {
             code = code.replace(target, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
           }
           code += `\n//# sourceURL=${targetScriptUrl}`;
+
+          // Store in memory cache for this session
+          _bundleCache.set(targetScriptUrl, code);
+
           return new Response(code, {
             status: 200,
             headers: {
               'content-type': 'text/javascript',
               'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-              'Access-Control-Allow-Headers': '*'
             }
           });
         } catch (err) {
