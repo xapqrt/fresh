@@ -33,8 +33,15 @@ try { os.setPriority(process.pid, -10); } catch (e) {}
 if (typeof Element.prototype.requestPointerLock === "function") {
   const _origReqPL = Element.prototype.requestPointerLock;
   Element.prototype.requestPointerLock = function (options) {
-    const opts = Object.assign({}, options, { unadjustedMovement: true });
-    return _origReqPL.call(this, opts).catch(() => _origReqPL.call(this, options));
+    try {
+      const res = _origReqPL.call(this, Object.assign({}, options, { unadjustedMovement: true }));
+      if (res && typeof res.catch === "function") {
+        return res.catch(() => _origReqPL.call(this, options));
+      }
+      return res;
+    } catch (e) {
+      return _origReqPL.call(this, options);
+    }
   };
 }
 

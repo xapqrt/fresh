@@ -6,7 +6,7 @@ const os = require("os");
 function applySwitches() {
   let in_process_gpu = false;
   let use_angle_opengl = false;
-  let use_angle_metal = true; // Enabled by default on Apple Silicon Electron 28
+  let use_angle_metal = false;
   let fps_cap = 0;
   try {
     const configPath = path.join(app.getPath("userData"), "config.json");
@@ -43,14 +43,14 @@ function applySwitches() {
   app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
 
   if (process.platform === "darwin") {
-    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,ScreenCaptureKit,AsyncWheelEvents,VizDisplayCompositor,CanvasOopRasterization,UseSkiaRenderer");
+    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,ScreenCaptureKit,AsyncWheelEvents,VizDisplayCompositor");
     app.commandLine.appendSwitch("enable-gpu-memory-buffer-video-frames");
     if (use_angle_metal && !use_angle_opengl) {
       app.commandLine.appendSwitch("use-gl", "angle");
       app.commandLine.appendSwitch("use-angle", "metal");
     }
   } else {
-    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks,CanvasOopRasterization");
+    app.commandLine.appendSwitch("enable-features", "VaapiIgnoreDriverChecks");
   }
 
   app.commandLine.appendSwitch("force-color-profile", "srgb");
