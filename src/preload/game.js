@@ -45,21 +45,72 @@ if (typeof Element.prototype.requestPointerLock === "function") {
   };
 }
 
-let settings = ipcRenderer.sendSync("get-settings");
-const base_url = settings.base_url;
+// FIX: Use async settings fetch to avoid blocking preload
+// Settings are fetched asynchronously and cached
+let settings = null;
+let base_url = null;
 
-// Only fully initialize on kirka pages — but do NOT return/delete require here
-// because the preload fires before navigation completes; window.location may still
-// be about:blank. Instead, we guard hook installation inside DOMContentLoaded.
+// Initialize settings asynchronously to avoid blocking preload
+(async () => {
+  try {
+    settings = await ipcRenderer.invoke("get-settings");
+    base_url = settings.base_url;
+  } catch (e) {
+    console.error("[Dawn] Failed to load settings:", e);
+    settings = { base_url: "https://kirka.io" };
+    base_url = settings.base_url;
+  }
+})();
+
 const _isKirkaPage = () => window.location.href.startsWith(base_url);
 
-const { installBhopHook } = require("./game/bhop");
-const { installRecorder } = require("./game/recorder");
-const Menu = require("./menu");
+// FIX: Lazy-load heavy modules only when on Kirka page
+// Don't load heavy modules (bhop, recorder, menu) synchronously in preload
+// They'll be loaded lazily in DOMContentLoaded when on Kirka page
+let _bhopInstalled = false;
+let _recorderInstalled = false;
+let _menuInstalled = false;
 
-installBhopHook();
-installRecorder();
-require("../addons/Custom Skin Link");
+const installBhopHook = () => {
+  if (_bhopInstalled) return;
+  _bhopInstalled = true;
+  try {
+    const { installBhopHook: install } = require("./game/bhop");
+    install();
+  } catch (e) {
+    console.error("[Dawn] Bhop hook install failed:", e);
+  }
+};
+
+const installRecorder = () => {
+  if (_recorderInstalled) return;
+  _recorderInstalled = true;
+  try {
+    const { installRecorder: install } = require("./game/recorder");
+    install();
+  } catch (e) {
+    console.error("[Dawn] Recorder install failed:", e);
+  }
+};
+
+const installMenu = () => {
+  if (_menuInstalled) return;
+  _menuInstalled = true;
+  try {
+    const Menu = require("./menu");
+    window.__dawnMenu = new Menu();
+  } catch (e) {
+    console.error("[Dawn] Menu init error:", e);
+  }
+};
+
+const installCustomSkinLink = () => {
+  try {
+    require("../addons/Custom Skin Link");
+  } catch (e) {
+    console.error("[Dawn] Custom Skin Link install failed:", e);
+  }
+};
 
 const installFpsOverlay = () => {
   let enabled = false;
@@ -129,7 +180,6 @@ const installFpsOverlay = () => {
   };
   ready();
 };
-installFpsOverlay();
 
 // Pre-warm V8 hot paths during lobby so Rosetta JIT translation cost is paid before the match
 const prewarmHotPaths = () => {
@@ -150,7 +200,6 @@ const schedulePrewarmHotPaths = () => {
     window.requestIdleCallback(() => prewarmHotPaths(), { timeout: 1500 });
     return;
   }
-
   setTimeout(prewarmHotPaths, 750);
 };
 
@@ -162,13 +211,51 @@ const _isMatch = (url) => {
 };
 
 window.__inMatch = _isMatch(window.location.href);
-setInterval(() => { if (window.__inMatch === false && typeof global.gc === 'function') global.gc(true); }, 30000);
 
-window.addEventListener("DOMContentLoaded", () => {
-  // Instantiate Menu here — document.body now exists so all querySelector calls work
-  if (_isKirkaPage()) {
-    try { window.__dawnMenu = new Menu(); } catch (e) { console.error("[Dawn] Menu init error:", e); }
+const _gcFull = () => { if (typeof global.gc === 'function') { global.gc(true); global.gc(true); } };
+setInterval(() => { if (window.__inMatch === false) _gcFull(); }, 10000);
+
+// FIX: Better WebGL context loss handling - don't preventDefault, just reload gracefully
+window.addEventListener("webglcontextlost", (e) => {
+  // Don't preventDefault - let the browser handle context loss naturally
+  // The game should handle webglcontextrestored event
+  console.warn("[preload] WebGL context lost — will reload on restore if not recovered");
+  
+  // Set a flag so we can detect if context is restored
+  window.__webglLost = true;
+  
+  // If not restored in 2 seconds, reload
+  setTimeout(() => {
+    if (window.__webglLost) {
+      console.warn("[preload] WebGL context not restored — reloading");
+      location.reload();
+    }
+  }, 2000);
+});
+
+window.addEventListener("webglcontextrestored", () => {
+  console.log("[preload] WebGL context restored");
+  window.__webglLost = false;
+});
+
+// FIX: Defer heavy initialization to DOMContentLoaded to avoid blocking page load
+window.addEventListener("DOMContentLoaded", async () => {
+  // Wait for settings to be loaded
+  while (!settings) {
+    await new Promise(r => setTimeout(r, 10));
   }
+  
+  // Only fully initialize on kirka pages
+  if (!_isKirkaPage()) return;
+
+  // Initialize hooks lazily
+  installBhopHook();
+  installRecorder();
+  installCustomSkinLink();
+  installFpsOverlay();
+  installMenu();
+
+  // Theme styles
   const s1 = document.createElement("style"); s1.id = "juice-styles-theme"; document.head.appendChild(s1);
   const s2 = document.createElement("style"); s2.id = "juice-styles-custom"; document.head.appendChild(s2);
   window.updateTheme = () => {
@@ -288,11 +375,17 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   ipcRenderer.on("url-change", (_, url) => {
+    const prevMatch = window.__inMatch;
     window._currentUrl = url;
     window.__inMatch = _isMatch(url);
 
     if (window.__inMatch) {
       setAdsPower(settings.ads_power);
+    }
+
+    // Aggressive GC on match transitions to free GPU resource wrappers
+    if (prevMatch !== window.__inMatch) {
+      _gcFull();
     }
 
     _previousUrl = url;
@@ -311,5 +404,3 @@ window.addEventListener("DOMContentLoaded", () => {
 
   handleInitialLoad();
 });
-
-

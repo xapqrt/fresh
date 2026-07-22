@@ -135,7 +135,6 @@ ipcMain.on("open-swapper-folder", () => {
     app.getPath("documents"),
     "DawnClient/swapper/assets"
   );
-
   if (!fs.existsSync(swapperPath)) {
     fs.mkdirSync(swapperPath, { recursive: true });
     shell.openPath(swapperPath);
@@ -144,14 +143,16 @@ ipcMain.on("open-swapper-folder", () => {
   }
 });
 
-ipcMain.on('bhop-key', (_, { key, down }) => {
-  if (!gameWindow || gameWindow.isDestroyed()) return;
-  try {
-    gameWindow.webContents.sendInputEvent({ type: down ? 'keyDown' : 'keyUp', keyCode: key, modifiers: [] });
-  } catch (e) {}
-});
-
 let gameWindow = null;
+let _navPreviousUrl = null;
+
+const _navIsMatch = (url) => {
+  if (!url) return false;
+  try {
+    const pathname = new URL(url).pathname;
+    return pathname.startsWith('/games') || pathname.startsWith('/hub/ranked');
+  } catch (e) { return false; }
+};
 
 const createWindow = () => {
   gameWindow = new BrowserWindow({
@@ -163,68 +164,106 @@ const createWindow = () => {
     title: "Dawn Client",
     width: 1280,
     height: 720,
-    show: true,
+    show: false,
     backgroundColor: "#141414",
     backgroundThrottling: false,
+    paintWhenInitiallyHidden: true,
     autoHideMenuBar: true,
     webPreferences: {
       scrollBounce: false,
       pinchZoom: false,
-      nodeIntegration: true,
+      nodeIntegration: false,
       contextIsolation: false,
-      webviewTag: false,
       sandbox: false,
       webSecurity: false,
       nativeWindowOpen: true,
       pointerLockV2: true,
-      // Never throttle input/raf when Chromium thinks the window is
-      // "occluded" or not frontmost — keeps mouse input snappy.
       backgroundThrottling: false,
       preload: path.join(__dirname, "../preload/game.js"),
     },
   });
 
-  // IMPORTANT: Do NOT call setFrameRate() here.
-  // setFrameRate() is ONLY for off-screen rendering (OSR) mode.
-  // On a normal BrowserWindow it interferes with the macOS CADisplayLink
-  // VSync signal and causes the compositor to drop to ~2-5 FPS.
-
-  // Use the actual Chrome 120 UA (matching Electron 28's Chromium build).
-  // Chrome 89 UA causes kirka.io to serve an older JS bundle.
   gameWindow.webContents.setUserAgent(
     `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 DawnClient/${app.getVersion()}`
   );
 
-  // Google / OAuth popups (window.open) must open IN-APP as real child windows
-  // so the window.opener relationship + postMessage round-trip works and the
-  // login callback returns to the game. Routing them to the system browser
-  // (shell.openExternal) breaks OAuth because the redirect can't come back.
-  // nativeWindowOpen:true makes Electron create native child popups when we
-  // return action:'allow'.
   gameWindow.webContents.on("new-window", (e, url) => {
-    // Match upstream (zVipexx/dawn-client): send auth/popup links to the
-    // system browser. kirka.io's OAuth is a redirect flow that completes there
-    // and the game window picks up the session on reload — this is the
-    // proven-working behavior.
     e.preventDefault();
     require("electron").shell.openExternal(url);
   });
 
   gameWindow.webContents.on("did-navigate-in-page", (e, url) => {
     gameWindow.webContents.send("url-change", url);
+    const wasInMatch = _navIsMatch(_navPreviousUrl);
+    const nowInMatch = _navIsMatch(url);
+    if (wasInMatch && !nowInMatch) {
+      matchEnded();
+    }
+    _navPreviousUrl = url;
+  });
+
+  const matchEnded = () => {
+    console.log("[game] Match ended — flushing GPU state");
+    try {
+      gameWindow.webContents.executeJavaScript(
+        'if (typeof gc === "function") { gc(true); gc(true); }'
+      );
+    } catch (e) {}
+    setTimeout(() => {
+      try {
+        if (gameWindow && !gameWindow.isDestroyed()) {
+          gameWindow.webContents.executeJavaScript(`
+            if (window.location.pathname.startsWith('/games') || window.location.pathname.startsWith('/hub/ranked')) {
+              window.location.href = '${settings.base_url}';
+            }
+          `).catch(() => {
+            gameWindow.reload();
+          });
+        }
+      } catch (e) {}
+    }, 200);
+  };
+
+  app.on("child-process-gone", (event, details) => {
+    if (details.type === 'GPU') {
+      console.error("[game] GPU process died:", details.reason, details.exitCode);
+      try {
+        if (gameWindow && !gameWindow.isDestroyed()) {
+          setTimeout(() => {
+            try {
+              const targetUrl = settings.base_url || "https://kirka.io/";
+              console.error(`[game] GPU restarted — reloading to ${targetUrl}`);
+              gameWindow.loadURL(targetUrl);
+            } catch (err) {
+              console.error("[game] GPU crash recovery failed:", err);
+            }
+          }, 3000);
+        }
+      } catch (e) {}
+    }
   });
 
   gameWindow.removeMenu();
   gameWindow.loadURL(settings.base_url);
   gameWindow.maximize();
-  gameWindow.show();
 
   gameWindow.once("ready-to-show", () => {
-    try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
-    if (process.platform === "darwin" && settings.auto_fullscreen) {
-      gameWindow.setFullScreen(true);
+    if (gameWindow && !gameWindow.isDestroyed()) {
+      gameWindow.show();
+      try { require("os").setPriority(gameWindow.webContents.getProcessId(), -10); } catch (e) {}
+      if (process.platform === "darwin" && settings.auto_fullscreen) {
+        gameWindow.setFullScreen(true);
+      }
     }
   });
+
+  // Force-show fallback after 15s to prevent black hang
+  setTimeout(() => {
+    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
+      console.warn("[game] Startup timeout — forcing window show");
+      gameWindow.show();
+    }
+  }, 15000);
 
   gameWindow.webContents.on("render-process-gone", () => {
     console.error("[game] render-process-gone — reloading");
@@ -249,9 +288,7 @@ const createWindow = () => {
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
-
   gameWindow.on("close", () => {});
-
   gameWindow.on("closed", () => {
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
@@ -266,29 +303,7 @@ const createWindow = () => {
 };
 
 // Two-layer bundle cache: memory (within a session) + disk (across sessions).
-// The disk cache avoids the 20s HTTPS re-download on every app launch.
 const _bundleCache = new Map();
-const _cacheDir = path.join(app.getPath("userData"), "bundle-cache");
-
-const _cachePath = (url) => {
-  const hash = require("crypto").createHash("sha256").update(url).digest("hex").slice(0, 16);
-  return path.join(_cacheDir, hash + ".js");
-};
-
-const _readDiskCache = (url) => {
-  try {
-    const p = _cachePath(url);
-    if (fs.existsSync(p)) return fs.readFileSync(p, "utf-8");
-  } catch (e) {}
-  return null;
-};
-
-const _writeDiskCache = (url, code) => {
-  try {
-    fs.mkdirSync(_cacheDir, { recursive: true });
-    fs.writeFileSync(_cachePath(url), code, "utf-8");
-  } catch (e) {}
-};
 
 let _patchProtocolRegistered = false;
 
@@ -300,23 +315,15 @@ const initGame = () => {
         const urlParams = new URL(request.url);
         const targetScriptUrl = urlParams.searchParams.get('url');
         try {
-          // Serve from memory cache first, then disk cache (avoids re-download)
-          {
-            const mem = _bundleCache.get(targetScriptUrl);
-            if (mem !== undefined) {
-              return new Response(mem, {
-                status: 200,
-                headers: { 'content-type': 'text/javascript', 'Access-Control-Allow-Origin': '*' }
-              });
-            }
-            const disk = _readDiskCache(targetScriptUrl);
-            if (disk !== null) {
-              _bundleCache.set(targetScriptUrl, disk);
-              return new Response(disk, {
-                status: 200,
-                headers: { 'content-type': 'text/javascript', 'Access-Control-Allow-Origin': '*' }
-              });
-            }
+          if (_bundleCache.has(targetScriptUrl)) {
+            const cached = _bundleCache.get(targetScriptUrl);
+            return new Response(cached, {
+              status: 200,
+              headers: {
+                'content-type': 'text/javascript',
+                'Access-Control-Allow-Origin': '*',
+              }
+            });
           }
 
           let code = await fetchText(targetScriptUrl);
@@ -324,13 +331,9 @@ const initGame = () => {
           if (code.includes(target)) {
             code = code.replace(target, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
           }
-          // Inject onGround hook into physics update loop if present
           code = code.replace(/this\['onGround'\]\s*=\s*([^;,]+)/g, "this['onGround']=$1,window.__onGround=$1");
           code += `\n//# sourceURL=${targetScriptUrl}`;
-
-          // Store in memory cache (fast) + disk cache (persists across launches)
           _bundleCache.set(targetScriptUrl, code);
-          _writeDiskCache(targetScriptUrl, code);
 
           return new Response(code, {
             status: 200,
@@ -341,13 +344,7 @@ const initGame = () => {
           });
         } catch (err) {
           console.error('dawn-patch fetch failed:', err);
-          return new Response("", {
-            status: 200,
-            headers: {
-              'content-type': 'text/javascript',
-              'Access-Control-Allow-Origin': '*',
-            }
-          });
+          return new Response("console.error('dawn-patch failed');", { status: 500 });
         }
       });
     } catch (e) {
