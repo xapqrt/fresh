@@ -1,15 +1,23 @@
-const { app, session, protocol } = require("electron");
+const { app, session, protocol, net } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const url = require("url");
+const { pathToFileURL } = require("url");
+
+let _swapperRegistered = false;
 
 const initResourceSwapper = () => {
-  protocol.registerFileProtocol("dawnclient", (request, callback) =>
-    callback({ path: request.url.replace("dawnclient://", "") })
-  );
-  protocol.registerFileProtocol("file", (request, callback) => {
-    callback(decodeURIComponent(request.url.replace("file:///", "")));
-  });
+  if (!_swapperRegistered) {
+    _swapperRegistered = true;
+    try {
+      protocol.handle("dawnclient", async (request) => {
+        const filePath = request.url.replace(/^dawnclient:\/\//, "");
+        return net.fetch(pathToFileURL(filePath).toString());
+      });
+    } catch (e) {
+      console.warn("dawnclient protocol registration issue:", e.message);
+    }
+  }
 
   const SWAP_FOLDER = path.join(
     app.getPath("documents"),

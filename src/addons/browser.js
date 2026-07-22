@@ -1,4 +1,4 @@
-const { shell, ipcRenderer } = require("electron");
+const { ipcRenderer } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -466,7 +466,7 @@ const _handleCardClick = (container, e, items, allRaw, type) => {
 
   const externalBtn = e.target.closest(".card-external-btn");
   if (externalBtn) {
-    shell.openExternal("https://kirkacommunityhub.pages.dev/assets#sounds");
+    ipcRenderer.send("open-external", "https://kirkacommunityhub.pages.dev/assets#sounds");
     return;
   }
 

@@ -1,6 +1,7 @@
 const { BrowserWindow, ipcMain, app, shell, session, protocol } = require("electron");
 const { default_settings, allowed_urls } = require("../util/defaults.json");
 const { initResourceSwapper } = require('../addons/swapper.js');
+const { performance } = require("perf_hooks");
 const path = require("path");
 const Store = require("electron-store");
 const fs = require("fs");
@@ -43,6 +44,58 @@ if (!allowed_urls.includes(settings.base_url)) {
 
 ipcMain.on("get-settings", (e) => {
   e.returnValue = settings;
+});
+
+ipcMain.handle("get-settings-async", async () => settings);
+
+ipcMain.handle("fs-exists", async (_, p) => {
+  try { return fs.existsSync(p); } catch (e) { return false; }
+});
+
+ipcMain.handle("fs-read-file", async (_, p, enc) => {
+  try { return fs.readFileSync(p, enc || "utf-8"); } catch (e) { return null; }
+});
+
+ipcMain.handle("fs-write-file", async (_, p, content) => {
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content, "utf-8");
+    return true;
+  } catch (e) { return false; }
+});
+
+ipcMain.handle("fs-readdir", async (_, p) => {
+  try { return fs.readdirSync(p); } catch (e) { return []; }
+});
+
+ipcMain.handle("fs-mkdir", async (_, p) => {
+  try { fs.mkdirSync(p, { recursive: true }); return true; } catch (e) { return false; }
+});
+
+ipcMain.handle("get-documents-path", async () => {
+  return app.getPath("documents");
+});
+
+ipcMain.handle("clipboard-write", async (_, text) => {
+  try { require("electron").clipboard.writeText(text); } catch (e) {}
+});
+
+ipcMain.handle("clipboard-read", async () => {
+  try { return require("electron").clipboard.readText(); } catch (e) { return ""; }
+});
+
+ipcMain.handle("get-desktop-sources", async (_, opts) => {
+  try {
+    const { desktopCapturer } = require("electron");
+    return await desktopCapturer.getSources(opts || { types: ["screen", "window"] });
+  } catch (e) {
+    console.error("get-desktop-sources failed:", e);
+    return [];
+  }
+});
+
+ipcMain.on("open-external", (_, url) => {
+  try { shell.openExternal(url); } catch (e) {}
 });
 
 const _writeSettings = () => {
@@ -114,41 +167,45 @@ function _bhopInject(s, key, down) {
 }
 
 function _bhopTick() {
-  const s = _bhopS;
-  if (!s || !s.on) return;
-  const now = performance.now();
+  try {
+    const s = _bhopS;
+    if (!s || !s.on) return;
+    const now = performance.now();
 
-  // Strafe switching (decoupled air-control)
-  if (s.strafeKey && (now - s.lastStrafeSwitch) >= s.strafeSwitchMs) {
-    s.lastStrafeSwitch = now;
-    const phys = (s.strafeKey === 'a' && s.aDown) || (s.strafeKey === 'd' && s.dDown);
-    if (!phys) {
-      _bhopInject(s, s.strafeKey, false);
-      s.strafeKey = s.strafeKey === 'a' ? 'd' : 'a';
-      _bhopInject(s, s.strafeKey, true);
-      s.strafePhysDown = true;
+    // Strafe switching (decoupled air-control)
+    if (s.strafeKey && (now - s.lastStrafeSwitch) >= s.strafeSwitchMs) {
+      s.lastStrafeSwitch = now;
+      const phys = (s.strafeKey === 'a' && s.aDown) || (s.strafeKey === 'd' && s.dDown);
+      if (!phys) {
+        _bhopInject(s, s.strafeKey, false);
+        s.strafeKey = s.strafeKey === 'a' ? 'd' : 'a';
+        _bhopInject(s, s.strafeKey, true);
+        s.strafePhysDown = true;
+      }
     }
-  }
 
-  if (s.grounded === true) {
-    s.lastToggle = now - s.holdMs - s.jitterMs;
-    if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
-    s.qDownPhys = true; _bhopInject(s, 'q', true);
-    s.phase = 1;
+    if (s.grounded === true) {
+      s.lastToggle = now - s.holdMs - s.jitterMs;
+      if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
+      s.qDownPhys = true; _bhopInject(s, 'q', true);
+      s.phase = 1;
+      s.jitterAccum = Math.random() * s.jitterMs;
+      return;
+    }
+
+    if (s.grounded === false) return;
+
+    if (s.lastToggle !== 0 && now - s.lastToggle > 5) return;
+    if (now - s.lastToggle < s.holdMs + s.jitterAccum) return;
+
+    s.lastToggle = now;
     s.jitterAccum = Math.random() * s.jitterMs;
-    return;
+
+    if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
+    else if (s.phase === 2) { s.qDownPhys = true; _bhopInject(s, 'q', true); s.phase = 1; }
+  } catch (e) {
+    console.error('[bhop] Tick error:', e);
   }
-
-  if (s.grounded === false) return;
-
-  if (s.lastToggle !== 0 && now - s.lastToggle > 5) return;
-  if (now - s.lastToggle < s.holdMs + s.jitterAccum) return;
-
-  s.lastToggle = now;
-  s.jitterAccum = Math.random() * s.jitterMs;
-
-  if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
-  else if (s.phase === 2) { s.qDownPhys = true; _bhopInject(s, 'q', true); s.phase = 1; }
 }
 
 ipcMain.on('bhop-start', () => {
@@ -210,10 +267,10 @@ const createWindow = () => {
     webPreferences: {
       scrollBounce: false,
       pinchZoom: false,
-      nodeIntegration: true,
-      contextIsolation: false,
-      webviewTag: true,
-      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      webviewTag: false,
+      sandbox: true,
       webSecurity: false,
       nativeWindowOpen: true,
       pointerLockV2: true,
@@ -282,6 +339,15 @@ const createWindow = () => {
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 
+  gameWindow.on("close", () => {
+    if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
+    _bhopS = null;
+    if (_bhopDebugger) {
+      try { _bhopDebugger.detach(); } catch (e) {}
+      _bhopDebugger = null;
+    }
+  });
+
   gameWindow.on("closed", () => {
     if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
     _bhopS = null;
@@ -304,22 +370,35 @@ const createWindow = () => {
   });
 };
 
+let _patchProtocolRegistered = false;
+
 const initGame = () => {
-  protocol.registerBufferProtocol('dawn-patch', (request, callback) => {
-    const urlParams = new URL(request.url);
-    const targetScriptUrl = urlParams.searchParams.get('url');
-    fetchText(targetScriptUrl).then((code) => {
-      const target = "f5['a'][hF]";
-      if (code.includes(target)) {
-        code = code.replace(target, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
-      }
-      code += `\n//# sourceURL=${targetScriptUrl}`;
-      callback({ mimeType: 'text/javascript', data: Buffer.from(code) });
-    }).catch((err) => {
-      console.error('dawn-patch fetch failed:', err);
-      callback({ statusCode: 500 });
-    });
-  });
+  if (!_patchProtocolRegistered) {
+    _patchProtocolRegistered = true;
+    try {
+      protocol.handle('dawn-patch', async (request) => {
+        const urlParams = new URL(request.url);
+        const targetScriptUrl = urlParams.searchParams.get('url');
+        try {
+          let code = await fetchText(targetScriptUrl);
+          const target = "f5['a'][hF]";
+          if (code.includes(target)) {
+            code = code.replace(target, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
+          }
+          code += `\n//# sourceURL=${targetScriptUrl}`;
+          return new Response(code, {
+            status: 200,
+            headers: { 'content-type': 'text/javascript' }
+          });
+        } catch (err) {
+          console.error('dawn-patch fetch failed:', err);
+          return new Response("console.error('dawn-patch failed');", { status: 500 });
+        }
+      });
+    } catch (e) {
+      console.warn('dawn-patch registration warning:', e.message);
+    }
+  }
 
   const swap = initResourceSwapper();
 

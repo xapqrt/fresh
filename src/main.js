@@ -10,10 +10,14 @@ const os = require("os");
 // Without this, the login page renders blank and auth never completes.
 protocol.registerSchemesAsPrivileged([
   { scheme: "https", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true } },
-  { scheme: "dawn-patch", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true } },
+  { scheme: "dawn-patch", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, standard: true, corsEnabled: true } },
+  { scheme: "dawnclient", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, standard: true, corsEnabled: true } },
 ]);
 
 applySwitches();
+
+// Enable sandbox (required for contextIsolation in Electron 20+)
+app.enableSandbox();
 
 app.on("ready", async () => {
   initSplash();

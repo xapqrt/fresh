@@ -1,10 +1,8 @@
 var _ipc = null;
 try { _ipc = require('electron').ipcRenderer; } catch (e) { }
-var _desktopCapturer = null;
-try { _desktopCapturer = require('electron').desktopCapturer; } catch (e) { }
 
 function installRecorder() {
-  if (!_desktopCapturer || !_ipc) { console.error('[Recorder] missing desktopCapturer or ipcRenderer'); return; }
+  if (!_ipc) { console.error('[Recorder] missing ipcRenderer'); return; }
 
   var _recording = false;
   var _mediaRecorder = null;
@@ -58,7 +56,7 @@ function installRecorder() {
       var h = Math.round((window.screen.height || 1080) * cfg.scale);
       if (w % 2) w++; if (h % 2) h++;
 
-      _desktopCapturer.getSources({
+      _ipc.invoke('get-desktop-sources', {
         types: ['screen', 'window'],
         thumbnailSize: { width: 0, height: 0 },
         fetchWindowIcons: false,

@@ -1,4 +1,4 @@
-const { ipcRenderer, clipboard } = require("electron");
+const { ipcRenderer } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { version } = require("../../package.json");
@@ -618,7 +618,7 @@ class Menu {
           weaponRgb: this.settings.weapon_rgb || false,
           inspectKeybind: this.settings.inspect_keybind || "KeyZ"
         };
-        clipboard.writeText(JSON.stringify(exportData));
+        ipcRenderer.invoke('clipboard-write', JSON.stringify(exportData));
         alert("Weapon Settings copied to clipboard!");
       });
     }

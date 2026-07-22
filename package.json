@@ -11,7 +11,7 @@
   "author": "zVipexx",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^12.2.3",
+    "electron": "^28.3.3",
     "electron-builder": "^26.0.12"
   },
   "repository": {
