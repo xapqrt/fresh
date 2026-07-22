@@ -307,7 +307,7 @@ const hookWebGL = () => {
   const origGetCtx = HTMLCanvasElement.prototype.getContext;
 
   HTMLCanvasElement.prototype.getContext = function (type, attrs) {
-    const ctx = origGetCtx.call(this, type, attrs);
+    const ctx = origGetCtx.call(this, type, Object.assign({ desynchronized: true }, attrs));
     if (!ctx || (type !== 'webgl' && type !== 'webgl2')) return ctx;
     if (this.id !== 'game' || _gameContext) return ctx;
 

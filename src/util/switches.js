@@ -48,6 +48,8 @@ function applySwitches() {
   // NOTE: removed enable-native-gpu-memory-buffers, enable-accelerated-2d-canvas,
   // CanvasOop, MetalOnlyGraphics, force-gpu-mem-available-mb — these destabilized
   // the GPU process (surface-creation failures -> GPU crash) on Electron 12 / Apple Silicon.
+  app.commandLine.appendSwitch("disable-gpu-vsync");
+  app.commandLine.appendSwitch("disable-frame-rate-limit");
   const rasterThreads = Math.min(os.cpus().length, 4);
   app.commandLine.appendSwitch("num-raster-threads", String(rasterThreads));
   if (process.platform === "darwin") {
@@ -78,15 +80,11 @@ function applySwitches() {
   app.commandLine.appendSwitch("touch-events", "disabled");
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,Translate,OptimizationHints,MediaRouter,BackForwardCache");
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=2048 --expose-gc --optimize-for-size");
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --sparkplug --no-turbo-inlining --memory-pressure-off --wasm-simd --wasm-threads --expose-gc --sharedarraybuffer");
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");
 
-  app.commandLine.appendSwitch("disable-gpu-watchdog");   // prevent GPU process reset after sustained load (lag after several matches)
-  app.commandLine.appendSwitch("disable-hang-monitor");
-  app.commandLine.appendSwitch("disable-background-timer-throttling");
-  app.commandLine.appendSwitch("disable-renderer-backgrounding");
-  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+
 
   app.allowRendererProcessReuse = true;
 }

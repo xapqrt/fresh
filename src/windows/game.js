@@ -92,30 +92,101 @@ ipcMain.on("open-swapper-folder", () => {
   }
 });
 
-ipcMain.on('dawn-bhop-key', (_, { type, keyCode, code, key }) => {
-  if (_bhopDebugger) {
-    try {
-      _bhopDebugger.sendCommand('Input.dispatchKeyEvent', {
-        type,
-        key,
-        code,
-        keyCode,
-        windowsVirtualKeyCode: keyCode,
-      });
-    } catch (e) {
-      console.warn('[bhop] CDP sendCommand failed:', e.message);
+// Main-process bhop state machine. Receives keyboard/ground state from the
+// renderer (via lightweight IPC) and injects keys via sendInputEvent — no CDP,
+// no rAF in renderer, no IPC per key event.
+let _bhopS = null;
+
+function _bhopMake() {
+  return { on: false, phase: 0, grounded: null, qDownPhys: false,
+    qDown: false, shiftDown: false, aDown: false, dDown: false,
+    strafeKey: null, strafePhysDown: false, lastToggle: 0,
+    holdMs: 10, jitterMs: 2, jitterAccum: 0,
+    lastStrafeSwitch: 0, strafeSwitchMs: 130, tid: null };
+}
+
+function _bhopInject(s, key, down) {
+  if (!gameWindow || gameWindow.isDestroyed()) return;
+  try {
+    const type = down ? 'keyDown' : 'keyUp';
+    gameWindow.webContents.sendInputEvent({ type, keyCode: key, modifiers: [] });
+  } catch (e) { /* non-critical */ }
+}
+
+function _bhopTick() {
+  const s = _bhopS;
+  if (!s || !s.on) return;
+  const now = performance.now();
+
+  // Strafe switching (decoupled air-control)
+  if (s.strafeKey && (now - s.lastStrafeSwitch) >= s.strafeSwitchMs) {
+    s.lastStrafeSwitch = now;
+    const phys = (s.strafeKey === 'a' && s.aDown) || (s.strafeKey === 'd' && s.dDown);
+    if (!phys) {
+      _bhopInject(s, s.strafeKey, false);
+      s.strafeKey = s.strafeKey === 'a' ? 'd' : 'a';
+      _bhopInject(s, s.strafeKey, true);
+      s.strafePhysDown = true;
     }
-  } else {
-    const _key = key || code.toLowerCase().replace(/^key/, '');
-    const _type = type === 'keyDown' ? 'keydown' : 'keyup';
-    gameWindow.webContents.executeJavaScript(`(function(){var e=new KeyboardEvent('${_type}',{key:'${_key}',code:'${code}',keyCode:${keyCode},which:${keyCode},bubbles:true,cancelable:true});document.dispatchEvent(e);})()`);
   }
+
+  if (s.grounded === true) {
+    s.lastToggle = now - s.holdMs - s.jitterMs;
+    if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
+    s.qDownPhys = true; _bhopInject(s, 'q', true);
+    s.phase = 1;
+    s.jitterAccum = Math.random() * s.jitterMs;
+    return;
+  }
+
+  if (s.grounded === false) return;
+
+  if (s.lastToggle !== 0 && now - s.lastToggle > 5) return;
+  if (now - s.lastToggle < s.holdMs + s.jitterAccum) return;
+
+  s.lastToggle = now;
+  s.jitterAccum = Math.random() * s.jitterMs;
+
+  if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
+  else if (s.phase === 2) { s.qDownPhys = true; _bhopInject(s, 'q', true); s.phase = 1; }
+}
+
+ipcMain.on('bhop-start', () => {
+  if (!_bhopS) _bhopS = _bhopMake();
+  const s = _bhopS; s.on = true; s.phase = 1; s.qDownPhys = true;
+  _bhopInject(s, 'q', true);
+  s.lastToggle = performance.now();
+  s.lastStrafeSwitch = performance.now();
+  if (s.tid) clearInterval(s.tid);
+  s.tid = setInterval(_bhopTick, 4);
+});
+
+ipcMain.on('bhop-stop', () => {
+  const s = _bhopS; if (!s) return; s.on = false;
+  if (s.qDownPhys) { s.qDownPhys = false; _bhopInject(s, 'q', false); }
+  if (s.strafePhysDown && s.strafeKey) {
+    const phys = (s.strafeKey === 'a' && s.aDown) || (s.strafeKey === 'd' && s.dDown);
+    if (!phys) _bhopInject(s, s.strafeKey, false);
+    s.strafePhysDown = false;
+  }
+  if (s.tid) { clearInterval(s.tid); s.tid = null; }
+});
+
+ipcMain.on('bhop-ground', (_, g) => { if (_bhopS) _bhopS.grounded = g; });
+
+ipcMain.on('bhop-keystate', (_, st) => {
+  if (!_bhopS) return;
+  if (st.aDown !== undefined) _bhopS.aDown = st.aDown;
+  if (st.dDown !== undefined) _bhopS.dDown = st.dDown;
+  if (st.qDown !== undefined) _bhopS.qDown = st.qDown;
+  if (st.shiftDown !== undefined) _bhopS.shiftDown = st.shiftDown;
 });
 
 let gameWindow = null;
 let _bhopDebugger = null;
 
 app.on('before-quit', () => {
+  if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
   if (_bhopDebugger) {
     try { _bhopDebugger.detach(); } catch (e) {}
     _bhopDebugger = null;
@@ -145,12 +216,16 @@ const createWindow = () => {
       sandbox: false,
       webSecurity: false,
       nativeWindowOpen: true,
+      pointerLockV2: true,
       // Never throttle input/raf when Chromium thinks the window is
       // "occluded" or not frontmost — keeps mouse input snappy.
       backgroundThrottling: false,
       preload: path.join(__dirname, "../preload/game.js"),
     },
   });
+
+  // Apply fps cap from settings (default 240)
+  try { gameWindow.setFrameRate(parseInt(settings.fps_cap, 10) || 240); } catch (e) {}
 
   gameWindow.webContents.setUserAgent(
     `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36 Electron/12.2.3 DawnClient/${app.getVersion()}`
@@ -208,14 +283,23 @@ const createWindow = () => {
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 
   gameWindow.on("closed", () => {
+    if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
+    _bhopS = null;
     if (_bhopDebugger) {
       try { _bhopDebugger.detach(); } catch (e) {}
       _bhopDebugger = null;
     }
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
-    ipcMain.removeAllListeners("dawn-bhop-key");
     ipcMain.removeAllListeners("save-recording");
+    ipcMain.removeAllListeners("navigate-home");
+    ipcMain.removeAllListeners("screenshot");
+    ipcMain.removeAllListeners("toggle-fullscreen");
+    ipcMain.removeAllListeners("toggle-devtools");
+    ipcMain.removeAllListeners("bhop-start");
+    ipcMain.removeAllListeners("bhop-stop");
+    ipcMain.removeAllListeners("bhop-ground");
+    ipcMain.removeAllListeners("bhop-keystate");
     gameWindow = null;
   });
 };
