@@ -1,7 +1,6 @@
 const { BrowserWindow, ipcMain, app, shell, session, protocol } = require("electron");
 const { default_settings, allowed_urls } = require("../util/defaults.json");
 const { initResourceSwapper } = require('../addons/swapper.js');
-const { performance } = require("perf_hooks");
 const path = require("path");
 const Store = require("electron-store");
 const fs = require("fs");
@@ -145,110 +144,7 @@ ipcMain.on("open-swapper-folder", () => {
   }
 });
 
-// Main-process bhop state machine. Receives keyboard/ground state from the
-// renderer (via lightweight IPC) and injects keys via sendInputEvent — no CDP,
-// no rAF in renderer, no IPC per key event.
-let _bhopS = null;
-
-function _bhopMake() {
-  return { on: false, phase: 0, grounded: null, qDownPhys: false,
-    qDown: false, shiftDown: false, aDown: false, dDown: false,
-    strafeKey: null, strafePhysDown: false, lastToggle: 0,
-    holdMs: 10, jitterMs: 2, jitterAccum: 0,
-    lastStrafeSwitch: 0, strafeSwitchMs: 130, tid: null };
-}
-
-function _bhopInject(s, key, down) {
-  if (!gameWindow || gameWindow.isDestroyed()) return;
-  try {
-    const type = down ? 'keyDown' : 'keyUp';
-    gameWindow.webContents.sendInputEvent({ type, keyCode: key, modifiers: [] });
-  } catch (e) { /* non-critical */ }
-}
-
-function _bhopTick() {
-  try {
-    const s = _bhopS;
-    if (!s || !s.on) return;
-    const now = performance.now();
-
-    // Strafe switching (decoupled air-control)
-    if (s.strafeKey && (now - s.lastStrafeSwitch) >= s.strafeSwitchMs) {
-      s.lastStrafeSwitch = now;
-      const phys = (s.strafeKey === 'a' && s.aDown) || (s.strafeKey === 'd' && s.dDown);
-      if (!phys) {
-        _bhopInject(s, s.strafeKey, false);
-        s.strafeKey = s.strafeKey === 'a' ? 'd' : 'a';
-        _bhopInject(s, s.strafeKey, true);
-        s.strafePhysDown = true;
-      }
-    }
-
-    if (s.grounded === true) {
-      s.lastToggle = now - s.holdMs - s.jitterMs;
-      if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
-      s.qDownPhys = true; _bhopInject(s, 'q', true);
-      s.phase = 1;
-      s.jitterAccum = Math.random() * s.jitterMs;
-      return;
-    }
-
-    if (s.grounded === false) return;
-
-    if (s.lastToggle !== 0 && now - s.lastToggle > 5) return;
-    if (now - s.lastToggle < s.holdMs + s.jitterAccum) return;
-
-    s.lastToggle = now;
-    s.jitterAccum = Math.random() * s.jitterMs;
-
-    if (s.phase === 1) { s.qDownPhys = false; _bhopInject(s, 'q', false); s.phase = 2; }
-    else if (s.phase === 2) { s.qDownPhys = true; _bhopInject(s, 'q', true); s.phase = 1; }
-  } catch (e) {
-    console.error('[bhop] Tick error:', e);
-  }
-}
-
-ipcMain.on('bhop-start', () => {
-  if (!_bhopS) _bhopS = _bhopMake();
-  const s = _bhopS; s.on = true; s.phase = 1; s.qDownPhys = true;
-  _bhopInject(s, 'q', true);
-  s.lastToggle = performance.now();
-  s.lastStrafeSwitch = performance.now();
-  if (s.tid) clearInterval(s.tid);
-  s.tid = setInterval(_bhopTick, 4);
-});
-
-ipcMain.on('bhop-stop', () => {
-  const s = _bhopS; if (!s) return; s.on = false;
-  if (s.qDownPhys) { s.qDownPhys = false; _bhopInject(s, 'q', false); }
-  if (s.strafePhysDown && s.strafeKey) {
-    const phys = (s.strafeKey === 'a' && s.aDown) || (s.strafeKey === 'd' && s.dDown);
-    if (!phys) _bhopInject(s, s.strafeKey, false);
-    s.strafePhysDown = false;
-  }
-  if (s.tid) { clearInterval(s.tid); s.tid = null; }
-});
-
-ipcMain.on('bhop-ground', (_, g) => { if (_bhopS) _bhopS.grounded = g; });
-
-ipcMain.on('bhop-keystate', (_, st) => {
-  if (!_bhopS) return;
-  if (st.aDown !== undefined) _bhopS.aDown = st.aDown;
-  if (st.dDown !== undefined) _bhopS.dDown = st.dDown;
-  if (st.qDown !== undefined) _bhopS.qDown = st.qDown;
-  if (st.shiftDown !== undefined) _bhopS.shiftDown = st.shiftDown;
-});
-
 let gameWindow = null;
-let _bhopDebugger = null;
-
-app.on('before-quit', () => {
-  if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
-  if (_bhopDebugger) {
-    try { _bhopDebugger.detach(); } catch (e) {}
-    _bhopDebugger = null;
-  }
-});
 
 const createWindow = () => {
   gameWindow = new BrowserWindow({
@@ -321,34 +217,29 @@ const createWindow = () => {
     if (process.platform === "darwin" && settings.auto_fullscreen) {
       gameWindow.setFullScreen(true);
     }
-    try {
-      var dbg = gameWindow.webContents.debugger;
-      dbg.attach('1.3');
-      _bhopDebugger = dbg;
-    } catch (e) {
-      console.warn('[bhop] CDP attach failed, using synthetic fallback:', e.message);
-      _bhopDebugger = null;
+  });
+
+  gameWindow.webContents.on("render-process-gone", () => {
+    gameWindow.reload();
+  });
+
+  gameWindow.on("unresponsive", () => {
+    setTimeout(() => {
+      try { gameWindow.reload(); } catch (e) {}
+    }, 5000);
+  });
+
+  gameWindow.webContents.on("did-fail-load", (_, code, desc) => {
+    if (code === -3 || code === -6) {
+      setTimeout(() => { try { gameWindow.reload(); } catch (e) {} }, 2000);
     }
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 
-  gameWindow.on("close", () => {
-    if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
-    _bhopS = null;
-    if (_bhopDebugger) {
-      try { _bhopDebugger.detach(); } catch (e) {}
-      _bhopDebugger = null;
-    }
-  });
+  gameWindow.on("close", () => {});
 
   gameWindow.on("closed", () => {
-    if (_bhopS && _bhopS.tid) { clearInterval(_bhopS.tid); _bhopS.tid = null; }
-    _bhopS = null;
-    if (_bhopDebugger) {
-      try { _bhopDebugger.detach(); } catch (e) {}
-      _bhopDebugger = null;
-    }
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
     ipcMain.removeAllListeners("save-recording");
@@ -356,10 +247,6 @@ const createWindow = () => {
     ipcMain.removeAllListeners("screenshot");
     ipcMain.removeAllListeners("toggle-fullscreen");
     ipcMain.removeAllListeners("toggle-devtools");
-    ipcMain.removeAllListeners("bhop-start");
-    ipcMain.removeAllListeners("bhop-stop");
-    ipcMain.removeAllListeners("bhop-ground");
-    ipcMain.removeAllListeners("bhop-keystate");
     gameWindow = null;
   });
 };

@@ -49,17 +49,22 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
   // ─── Features ────────────────────────────────────────────────────────────
+  app.commandLine.appendSwitch("enable-features",
+    "ParallelDownloading");
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter");
 
   // ─── V8 / JS ─────────────────────────────────────────────────────────────
   // Only safe, well-supported flags. --max-old-space-size gives the game
   // heap room. --sparkplug enables Sparkplug tier-1 JIT. --expose-gc lets us
-  // trigger GC between matches.
+  // trigger GC between matches. --turbo-fast-api-calls enables fast V8 API
+  // call paths for DOM/WebGL (available since V8 10.x / Electron 28).
+  // --max-semi-space-size=64 gives the young-generation scavenger more room
+  // so minor GCs are less frequent during gameplay.
   // Excluded (unsafe on kirka.io):
   //   --sharedarraybuffer  (requires Cross-Origin-Isolation headers)
   //   --wasm-threads       (same — kirka.io doesn't set COOP/COEP)
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --sparkplug --expose-gc");
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=64 --sparkplug --turbo-fast-api-calls --expose-gc");
 
   // ─── Audio ───────────────────────────────────────────────────────────────
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
