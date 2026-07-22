@@ -40,16 +40,21 @@ app.on("ready", async () => {
 app.on("child-process-gone", (_, details) => {
   console.error(`[main] child-process-gone: type=${details.type} reason=${details.reason}`);
   if (details.type !== "GPU") return;
-  try {
-    const gw = getGameWindow();
-    if (gw && !gw.isDestroyed()) {
-      const url = gw.webContents.getURL();
-      console.error(`[main] GPU crash — reloading ${url}`);
-      gw.loadURL(url || "https://kirka.io/");
+  // GPU just crashed. Chromium will restart it immediately (thanks to
+  // --disable-gpu-process-crash-limit). Wait 1.5s for the restart to
+  // finish, then reload the game page so it creates a fresh WebGL context
+  // on the new GPU process (instead of falling back to SwiftShader).
+  setTimeout(() => {
+    try {
+      const gw = getGameWindow();
+      if (gw && !gw.isDestroyed()) {
+        console.error("[main] GPU restarted — reloading to https://kirka.io/");
+        gw.loadURL("https://kirka.io/");
+      }
+    } catch (e) {
+      console.error("[main] GPU crash recovery failed:", e);
     }
-  } catch (e) {
-    console.error("[main] GPU crash recovery failed:", e);
-  }
+  }, 1500);
 });
 
 app.on("before-quit", () => {

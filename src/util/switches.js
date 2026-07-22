@@ -48,6 +48,15 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
+  // ─── GPU process crash behavior ──────────────────────────────────────────
+  // On Apple Silicon, the Metal driver can crash during heavy WebGL usage
+  // (e.g. second match loading new textures). Without this flag, Chromium
+  // disables the GPU process after a few crashes and permanently falls back
+  // to SwiftShader software rendering (2-5 FPS, black screen).
+  // With this flag, the GPU process is restarted each time, and our
+  // child-process-gone handler reloads the page onto a fresh GPU process.
+  app.commandLine.appendSwitch("disable-gpu-process-crash-limit");
+
   // ─── Features ────────────────────────────────────────────────────────────
   app.commandLine.appendSwitch("enable-features",
     "ParallelDownloading");
