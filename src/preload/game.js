@@ -4,9 +4,82 @@ require("../addons/Custom Skin Link.js");
 const weaponHook = require('../webgl/weapon-hook');
 const observerRouter = require('../dom/observer-router');
 
+const fs = require('fs');
+const path = require('path');
+
 const _cssStyleId = "dawn-custom-css";
 const _advancedStyleId = "dawn-advanced-css";
 const _cssCache = new Map();
+
+let _menuEl = null;
+let _menuCssInjected = false;
+
+let _settings = null;
+try { _settings = require('electron').ipcRenderer.sendSync('get-settings'); } catch (e) {}
+
+const _menuKeybind = _settings?.menu_keybind || 'ShiftRight';
+
+const createWeaponConfig = (s) => ({
+  getSettings: () => ({
+    size: s.weapon_size ?? 1,
+    offsetX: s.weapon_offset_x ?? 0,
+    offsetY: s.weapon_offset_y ?? 0,
+    offsetZ: s.weapon_offset_z ?? 0,
+  }),
+  getArmSettings: (wid, side) => ({
+    size: s.arm_size ?? 1,
+    offsetX: s.arm_offset_x ?? 0,
+    offsetY: s.arm_offset_y ?? 0,
+    offsetZ: s.arm_offset_z ?? 0,
+    wireframe: (s.universal_arm_settings ? s.weapon_wireframe : s.arm_wireframe) ?? false,
+    colorEnabled: (s.universal_arm_settings ? s.weapon_color : s.arm_color) ?? false,
+    colorHex: '#FFFFFF',
+    rgb: (s.universal_arm_settings ? s.weapon_rgb : s.arm_rgb) ?? false,
+  }),
+});
+
+if (_settings) {
+  weaponHook.setWeaponConfig(createWeaponConfig(_settings), {}, {});
+}
+
+function injectMenu() {
+  if (_menuEl) return;
+  try {
+    const html = fs.readFileSync(path.join(__dirname, '../assets/html/menu.html'), 'utf-8');
+    _menuEl = document.createElement('div');
+    _menuEl.id = 'dawn-menu-container';
+    _menuEl.innerHTML = html;
+    _menuEl.style.display = 'none';
+    document.body.appendChild(_menuEl);
+
+    if (!_menuCssInjected) {
+      const css = fs.readFileSync(path.join(__dirname, '../assets/css/menu.css'), 'utf-8');
+      const style = document.createElement('style');
+      style.id = 'dawn-menu-css';
+      style.textContent = css;
+      document.head.appendChild(style);
+      _menuCssInjected = true;
+    }
+  } catch (e) {
+    console.warn('[Dawn] Menu injection failed:', e.message);
+  }
+}
+
+function toggleMenu() {
+  injectMenu();
+  if (!_menuEl) return;
+  const shown = _menuEl.style.display !== 'none';
+  _menuEl.style.display = shown ? 'none' : '';
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.code === _menuKeybind) {
+    e.stopImmediatePropagation();
+    toggleMenu();
+  }
+}, true);
+
+try { require('electron').ipcRenderer.on('toggle-menu', toggleMenu); } catch (e) {}
 
 async function loadCustomCSS() {
   try {

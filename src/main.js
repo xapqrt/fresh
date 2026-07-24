@@ -44,20 +44,8 @@ ipcMain.handle("fs-mkdir", async (_, p) => { try { fs.mkdirSync(p, { recursive: 
 ipcMain.handle("get-documents-path", async () => app.getPath("documents"));
 ipcMain.handle("clipboard-write", async (_, text) => { try { require("electron").clipboard.writeText(text); } catch {} });
 ipcMain.handle("clipboard-read", async () => { try { return require("electron").clipboard.readText(); } catch { return ""; } });
-ipcMain.handle("get-desktop-sources", async (_, opts) => {
-  try {
-    const { desktopCapturer } = require("electron");
-    return await desktopCapturer.getSources(opts || { types: ["screen", "window"] });
-  } catch { return []; }
-});
 ipcMain.on("open-external", (_, url) => { try { shell.openExternal(url); } catch {} });
 ipcMain.on("navigate", (_, url) => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.loadURL(url); });
-ipcMain.on("save-recording", (_, buf) => {
-  const clipsDir = path.join(app.getPath("documents"), "DawnClient", "clips");
-  fs.mkdirSync(clipsDir, { recursive: true });
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  fs.writeFile(path.join(clipsDir, `clip-${ts}.webm`), Buffer.from(buf), () => {});
-});
 ipcMain.on("navigate-home", () => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.loadURL(settings.base_url); });
 ipcMain.on("toggle-fullscreen", () => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.setFullScreen(!gameWindow.isFullScreen()); });
 ipcMain.on("toggle-devtools", () => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.webContents.toggleDevTools(); });
@@ -240,7 +228,6 @@ const createWindow = () => {
       contextIsolation: false,
       sandbox: false,
       webSecurity: false,
-      nativeWindowOpen: true,
       pointerLockV2: true,
       scrollBounce: false,
       pinchZoom: false,
@@ -318,7 +305,6 @@ const createWindow = () => {
   gameWindow.on("closed", () => {
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
-    ipcMain.removeAllListeners("save-recording");
     ipcMain.removeAllListeners("navigate-home");
     ipcMain.removeAllListeners("screenshot");
     ipcMain.removeAllListeners("toggle-fullscreen");

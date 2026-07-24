@@ -307,9 +307,11 @@ const hookWebGL = () => {
   const origGetCtx = HTMLCanvasElement.prototype.getContext;
 
   HTMLCanvasElement.prototype.getContext = function (type, attrs) {
-    const ctx = origGetCtx.call(this, type, Object.assign({ desynchronized: true }, attrs));
+    const isGameCanvas = this.id === 'game' || this.id === 'gameCanvas' || !_gameContext;
+    const merged = isGameCanvas ? Object.assign({ desynchronized: true }, attrs) : attrs;
+    const ctx = origGetCtx.call(this, type, merged);
     if (!ctx || (type !== 'webgl' && type !== 'webgl2')) return ctx;
-    if (this.id !== 'game' || _gameContext) return ctx;
+    if (!isGameCanvas || _gameContext) return ctx;
 
     _gameContext = ctx;
 
