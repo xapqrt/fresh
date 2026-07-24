@@ -77,8 +77,22 @@ ipcMain.on("bhop-key", (_, { key, down }) => {
   }
 });
 
-// In-memory bundle cache for dawn-patch protocol
+// Bundle cache: memory + disk (keyed by URL filename, e.g. app.abc123.js)
 const _bundleCache = new Map();
+const _cacheDir = () => path.join(app.getPath('userData'), 'bundle-cache');
+const _cacheKey = (url) => { try { return new URL(url).pathname.split('/').pop() || url; } catch { return url; } };
+const _cacheGet = (key) => {
+  if (_bundleCache.has(key)) return _bundleCache.get(key);
+  try {
+    const f = path.join(_cacheDir(), _cacheKey(key));
+    if (fs.existsSync(f)) { const d = fs.readFileSync(f, 'utf-8'); _bundleCache.set(key, d); return d; }
+  } catch (e) {}
+  return null;
+};
+const _cacheSet = (key, data) => {
+  _bundleCache.set(key, data);
+  try { const d = _cacheDir(); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, _cacheKey(key)), data, 'utf-8'); } catch (e) {}
+};
 let _patchProtocolRegistered = false;
 
 const PRELOAD_PATH = path.join(__dirname, "preload", "game.js");
@@ -135,49 +149,44 @@ const initPatchProtocol = () => {
     protocol.handle('dawn-patch', async (request) => {
       const urlParams = new URL(request.url);
       const targetScriptUrl = urlParams.searchParams.get('url');
-      
-      // Serve from memory cache immediately
-      if (_bundleCache.has(targetScriptUrl)) {
-        const cached = _bundleCache.get(targetScriptUrl);
-        return new Response(cached, {
-          status: 200,
-          headers: {
-            'content-type': 'text/javascript',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=31536000, immutable',
-          }
-        });
-      }
+
+      const serve = (body, status = 200) => new Response(body, {
+        status,
+        headers: {
+          'content-type': 'text/javascript',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        }
+      });
+
+      const cached = _cacheGet(targetScriptUrl);
+      if (cached) return serve(cached);
 
       try {
         let code = await fetchText(targetScriptUrl);
-        
-        // Patch 1: Expose f5 array and zoom instance
-        const target = "f5['a'][hF]";
-        if (code.includes(target)) {
-          code = code.replace(target, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
+
+        const zoomTarget = "f5['a'][hF]";
+        if (code.includes(zoomTarget)) {
+          code = code.replace(zoomTarget, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
+        } else {
+          console.warn('[dawn-patch] WARNING: zoom pattern not found — bundle format may have changed');
         }
-        
-        // Patch 2: Hook onGround for bhop
-        code = code.replace(/this\['onGround'\]\s*=\s*([^;,]+)/g, "this['onGround']=$1,window.__onGround=$1");
-        
-        // Add sourceURL for debugging
+
+        const onGroundRe = /this\['onGround'\]\s*=\s*([^;,]+)/;
+        if (onGroundRe.test(code)) {
+          code = code.replace(onGroundRe, "this['onGround']=$1,window.__onGround=$1");
+        } else {
+          console.warn('[dawn-patch] WARNING: onGround pattern not found — bhop may be broken');
+        }
+
         code += `\n//# sourceURL=${targetScriptUrl}`;
 
-        // Store in memory cache
-        _bundleCache.set(targetScriptUrl, code);
+        _cacheSet(targetScriptUrl, code);
 
-        return new Response(code, {
-          status: 200,
-          headers: {
-            'content-type': 'text/javascript',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=31536000, immutable',
-          }
-        });
+        return serve(code);
       } catch (err) {
         console.error('dawn-patch fetch failed:', err);
-        return new Response("console.error('dawn-patch failed');", { status: 500 });
+        return serve("console.error('dawn-patch failed');", 500);
       }
     });
   } catch (e) {
@@ -237,6 +246,8 @@ const createWindow = () => {
       pinchZoom: false,
       experimentalFeatures: false,
       backgroundThrottling: false,
+      spellcheck: false,
+      enableWebSQL: false,
     },
     backgroundColor: "#141414",
     paintWhenInitiallyHidden: true,
@@ -406,7 +417,7 @@ const initGame = () => {
           if (splashWindow && !splashWindow.isDestroyed()) {
             splashWindow.close();
           }
-        }, 500);
+        }, 200);
       });
     }
   }, 100);

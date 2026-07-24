@@ -6,6 +6,7 @@ const observerRouter = require('../dom/observer-router');
 
 const _cssStyleId = "dawn-custom-css";
 const _advancedStyleId = "dawn-advanced-css";
+const _cssCache = new Map();
 
 async function loadCustomCSS() {
   try {
@@ -13,38 +14,38 @@ async function loadCustomCSS() {
     const settings = _ipcCSS.sendSync('get-settings');
     if (!settings) return;
 
-    if (settings.css_enabled && settings.css_link) {
-      let existing = document.getElementById(_cssStyleId);
-      if (existing) existing.remove();
+    const injectStyle = (id, text) => {
+      let el = document.getElementById(id);
+      if (el) el.remove();
+      if (text) {
+        el = document.createElement('style');
+        el.id = id;
+        el.textContent = text;
+        document.head.appendChild(el);
+      }
+    };
 
-      try {
-        const res = await fetch(settings.css_link);
-        if (res.ok) {
-          const text = await res.text();
-          const style = document.createElement('style');
-          style.id = _cssStyleId;
-          style.textContent = text;
-          document.head.appendChild(style);
+    if (settings.css_enabled && settings.css_link) {
+      const cached = _cssCache.get(settings.css_link);
+      if (cached) {
+        injectStyle(_cssStyleId, cached);
+      } else {
+        try {
+          const res = await fetch(settings.css_link);
+          if (res.ok) {
+            const text = await res.text();
+            _cssCache.set(settings.css_link, text);
+            injectStyle(_cssStyleId, text);
+          }
+        } catch (e) {
+          console.warn('[Dawn] Failed to load custom CSS:', e.message);
         }
-      } catch (e) {
-        console.warn('[Dawn] Failed to load custom CSS:', e.message);
       }
     } else {
-      const existing = document.getElementById(_cssStyleId);
-      if (existing) existing.remove();
+      injectStyle(_cssStyleId, null);
     }
 
-    if (settings.advanced_css) {
-      let existing = document.getElementById(_advancedStyleId);
-      if (existing) existing.remove();
-      const style = document.createElement('style');
-      style.id = _advancedStyleId;
-      style.textContent = settings.advanced_css;
-      document.head.appendChild(style);
-    } else {
-      const existing = document.getElementById(_advancedStyleId);
-      if (existing) existing.remove();
-    }
+    injectStyle(_advancedStyleId, settings.advanced_css || null);
   } catch (e) {
     console.warn('[Dawn] CSS load error:', e.message);
   }

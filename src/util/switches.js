@@ -39,12 +39,12 @@ function applySwitches() {
 
   // ─── Features ────────────────────────────────────────────────────────────
   app.commandLine.appendSwitch("enable-features",
-    "ParallelDownloading");
+    "ParallelDownloading,CanvasOopRasterization");
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter");
 
 
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=64 --sparkplug --turbo-fast-api-calls --expose-gc");
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=64 --sparkplug --turbo-fast-api-calls --expose-gc --cache=code");
 
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");

@@ -5,13 +5,14 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build": "npx electron-builder --mac --arm64"
+    "build": "npx electron-builder --mac --arm64",
+    "build:wasm": "bash scripts/build-wasm.sh"
   },
   "keywords": [],
   "author": "zVipexx",
   "license": "ISC",
   "devDependencies": {
-    "electron": "32.2.0",
+    "electron": "^41.0.0",
     "electron-builder": "^26.0.12"
   },
   "repository": {
