@@ -68,6 +68,15 @@ ipcMain.handle("screenshot", async () => {
   return null;
 });
 
+ipcMain.on("bhop-key", (_, { key, down }) => {
+  if (gameWindow && !gameWindow.isDestroyed()) {
+    gameWindow.webContents.sendInputEvent({
+      type: down ? "keyDown" : "keyUp",
+      keyCode: key.toUpperCase(),
+    });
+  }
+});
+
 // In-memory bundle cache for dawn-patch protocol
 const _bundleCache = new Map();
 let _patchProtocolRegistered = false;
