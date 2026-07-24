@@ -213,8 +213,6 @@ const createSplashWindow = () => {
 };
 
 const createWindow = () => {
-  // FIX: Prevent permanent fallback to SwiftShader after GPU process crash
-  app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
   // Note: Don't add --enable-gpu-rasterization, --enable-zero-copy, --disable-gpu-vsync etc.
   // These crash the GPU process on Apple Silicon Metal and cause Chromium to fall
   // back to SwiftShader software rendering (~2-5 FPS). switches.js handles safe flags.
@@ -305,26 +303,6 @@ const createWindow = () => {
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
-
-  // GPU process crash recovery with 3s delay for driver reset
-  app.on("child-process-gone", (event, details) => {
-    if (details.type === 'GPU') {
-      console.error("[game] GPU process died:", details.reason, details.exitCode);
-      try {
-        if (gameWindow && !gameWindow.isDestroyed()) {
-          setTimeout(() => {
-            try {
-              const targetUrl = settings.base_url || "https://kirka.io/";
-              console.error(`[game] GPU restarted — reloading to ${targetUrl}`);
-              gameWindow.loadURL(targetUrl);
-            } catch (err) {
-              console.error("[game] GPU crash recovery failed:", err);
-            }
-          }, 3000);
-        }
-      } catch (e) {}
-    }
-  });
 
   gameWindow.on("closed", () => {
     ipcMain.removeAllListeners("get-settings");
@@ -453,13 +431,13 @@ app.on("ready", async () => {
   });
 });
 
+let _gpuRecovering = false;
+
 app.on("child-process-gone", (_, details) => {
   console.error(`[main] child-process-gone: type=${details.type} reason=${details.reason}`);
   if (details.type !== "GPU") return;
-  // GPU just crashed. Chromium will restart it immediately (thanks to
-  // --disable-gpu-process-crash-limit). Wait 1.5s for the restart to
-  // finish, then reload the game page so it creates a fresh WebGL context
-  // on the new GPU process (instead of falling back to SwiftShader).
+  if (_gpuRecovering) return;
+  _gpuRecovering = true;
   setTimeout(() => {
     try {
       const gw = getGameWindow();
@@ -470,6 +448,7 @@ app.on("child-process-gone", (_, details) => {
     } catch (e) {
       console.error("[main] GPU crash recovery failed:", e);
     }
+    _gpuRecovering = false;
   }, 1500);
 });
 

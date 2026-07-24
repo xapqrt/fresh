@@ -37,8 +37,6 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
-  app.commandLine.appendSwitch("disable-gpu-process-crash-limit");
-
   // ─── Features ────────────────────────────────────────────────────────────
   app.commandLine.appendSwitch("enable-features",
     "ParallelDownloading");
