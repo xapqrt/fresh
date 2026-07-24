@@ -20,6 +20,11 @@ try { _settings = require('electron').ipcRenderer.sendSync('get-settings'); } ca
 const _menuKeybind = _settings?.menu_keybind || 'ShiftRight';
 
 const createWeaponConfig = (s) => ({
+  colorEnabled: s.weapon_color ?? false,
+  rgb: s.weapon_rgb ?? false,
+  wireframe: s.weapon_wireframe ?? false,
+  universal: s.universal_settings ?? false,
+  colorHex: s.weapon_color_hex || '#FFFFFF',
   getSettings: () => ({
     size: s.weapon_size ?? 1,
     offsetX: s.weapon_offset_x ?? 0,
@@ -33,13 +38,17 @@ const createWeaponConfig = (s) => ({
     offsetZ: s.arm_offset_z ?? 0,
     wireframe: (s.universal_arm_settings ? s.weapon_wireframe : s.arm_wireframe) ?? false,
     colorEnabled: (s.universal_arm_settings ? s.weapon_color : s.arm_color) ?? false,
-    colorHex: '#FFFFFF',
+    colorHex: (s.universal_arm_settings ? s.weapon_color_hex : s.arm_color_hex) || '#FFFFFF',
     rgb: (s.universal_arm_settings ? s.weapon_rgb : s.arm_rgb) ?? false,
   }),
 });
 
+function updateWeaponConfig(s) {
+  weaponHook.setWeaponConfig(createWeaponConfig(s), {}, {});
+}
+
 if (_settings) {
-  weaponHook.setWeaponConfig(createWeaponConfig(_settings), {}, {});
+  updateWeaponConfig(_settings);
 }
 
 function injectMenu() {
@@ -125,9 +134,14 @@ async function loadCustomCSS() {
 }
 
 document.addEventListener("juice-settings-changed", (e) => {
-  if (["css_link", "css_enabled", "advanced_css"].includes(e.detail.setting)) {
+  const setting = e.detail.setting;
+  if (["css_link", "css_enabled", "advanced_css"].includes(setting)) {
     loadCustomCSS();
   }
+  try {
+    const s = require('electron').ipcRenderer.sendSync('get-settings');
+    updateWeaponConfig(s);
+  } catch (e) {}
 });
 
 if (document.readyState === "loading") {

@@ -116,7 +116,7 @@ function installBhopHook() {
     var k = e.key;
     if (k === "Escape") { _reset(); return; }
     if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) return;
-    if (k === "Shift") { _shiftDown = true; _start(); }
+    if (e.code === "ShiftLeft") { _shiftDown = true; _start(); }
     else if (k === "q" || k === "Q") { _qDown = true; _start(); }
     else if (k === "a" || k === "A") { _aDown = true; if (_bhopOn) _strafeKey = 'a'; }
     else if (k === "d" || k === "D") { _dDown = true; if (_bhopOn) _strafeKey = 'd'; }
@@ -126,7 +126,7 @@ function installBhopHook() {
     if (!e.isTrusted) return;
     var k = e.key;
     if (k === "Escape") return;
-    if (k === "Shift") { _shiftDown = false; if (!_shiftDown && !_qDown) _stop(); }
+    if (e.code === "ShiftLeft") { _shiftDown = false; if (!_shiftDown && !_qDown) _stop(); }
     else if (k === "q" || k === "Q") { _qDown = false; if (!_shiftDown && !_qDown) _stop(); }
     else if (k === "a" || k === "A") {
       _aDown = false;
