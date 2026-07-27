@@ -67,8 +67,7 @@
     --opacity-half: 230, 224, 245, 0.5;
     --opacity-quarter: 230, 224, 245, 0.25;
 
-    background: linear-gradient(135deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.6)) !important;
-    backdrop-filter: blur(20px) !important;
+    background: rgba(7, 7, 10, 0.92) !important;
     border: 1px solid rgba(255, 255, 255, 0.18) !important;
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37) !important;
 }
@@ -204,8 +203,7 @@
 }
 
 .menu[data-theme="glass"] .menu-titlebar {
-    background: linear-gradient(135deg, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.8)) !important;
-    backdrop-filter: blur(20px) !important;
+    background: rgba(7, 7, 10, 0.95) !important;
     border: 1px solid rgba(255, 255, 255, 0.18) !important;
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37) !important;
 }

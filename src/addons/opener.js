@@ -250,6 +250,11 @@ async function executeCardScript(customcardlist) {
   function confettiAnimation() {
     const duration = 15 * 1000;
     const animationEnd = Date.now() + duration;
+
+    function randomInRange(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
     const defaults = {
       startVelocity: 30,
       spread: 360,
@@ -257,17 +262,9 @@ async function executeCardScript(customcardlist) {
       zIndex: 0,
     };
 
-    function randomInRange(min, max) {
-      return Math.random() * (max - min) + min;
-    }
-
-    const intervalconfetti = setInterval(() => {
+    function _tick() {
       const timeLeft = animationEnd - Date.now();
-
-      if (timeLeft <= 0) {
-        clearInterval(intervalconfetti);
-        return;
-      }
+      if (timeLeft <= 0) return;
 
       const particleCount = 50 * (timeLeft / duration);
       confetti({
@@ -282,7 +279,9 @@ async function executeCardScript(customcardlist) {
         origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
         zIndex: 99999,
       });
-    }, 250);
+      requestAnimationFrame(_tick);
+    }
+    requestAnimationFrame(_tick);
   }
 
   //This one handles updatign the counter variable
@@ -429,50 +428,54 @@ async function executeCardScript(customcardlist) {
 
   let openedItems = {};
   let counter = 0;
-  let interval = setInterval(async () => {
-    let cardresult = await openCard(cards[counter]["cardid"]);
-    if (resultName) {
-      ingameShowcase(resultName, resultRarity, cards[counter]["name"]);
+  function _nextCard() {
+    setTimeout(async () => {
+      let cardresult = await openCard(cards[counter]["cardid"]);
+      if (resultName) {
+        ingameShowcase(resultName, resultRarity, cards[counter]["name"]);
 
-      let translatedRarity = translations[resultRarity];
-      if (translatedRarity == undefined) {
-        translatedRarity = rarity_backup(
-          bvl,
-          "Skin Name",
-          "Rarity",
-          resultName,
-        );
-      }
-      translatedRarity = translatedRarity.toUpperCase();
+        let translatedRarity = translations[resultRarity];
+        if (translatedRarity == undefined) {
+          translatedRarity = rarity_backup(
+            bvl,
+            "Skin Name",
+            "Rarity",
+            resultName,
+          );
+        }
+        translatedRarity = translatedRarity.toUpperCase();
 
-      if (!openedItems[translatedRarity]) {
-        openedItems[translatedRarity] = [];
-      }
-      openedItems[translatedRarity].push(resultName);
+        if (!openedItems[translatedRarity]) {
+          openedItems[translatedRarity] = [];
+        }
+        openedItems[translatedRarity].push(resultName);
 
-      if (
-        translations[resultRarity] == "MYTHICAL" ||
-        translations[resultRarity] == "PARANORMAL"
-      ) {
-        confettiAnimation();
+        if (
+          translations[resultRarity] == "MYTHICAL" ||
+          translations[resultRarity] == "PARANORMAL"
+        ) {
+          confettiAnimation();
+        }
+      } else if (cardresult["code"] == 9910) {
+        console.log("RATELIMIT");
+      } else {
+        cardskipper[counter]++;
+        console.log("DON'T WORRY ABOUT THE ERROR");
+        console.log("THE CHEST THAT IT TRIED TO OPEN IS NOT AVAILABLE ANYMORE");
+        console.log("IT WILL SKIP THAT ONE AFTER 2 FAILS");
       }
-    } else if (cardresult["code"] == 9910) {
-      console.log("RATELIMIT");
-    } else {
-      cardskipper[counter]++;
-      console.log("DON'T WORRY ABOUT THE ERROR");
-      console.log("THE CHEST THAT IT TRIED TO OPEN IS NOT AVAILABLE ANYMORE");
-      console.log("IT WILL SKIP THAT ONE AFTER 2 FAILS");
-    }
-    counter = updateCounter(counter, cardskipper);
-    let check = cardskipper.reduce((acc, val) => acc + val, 0);
-    if (check == cardskipper.length * 2) {
-      clearInterval(interval);
-      console.log("Finished Running");
-      ingameShowcase_end();
-      logSummary(openedItems, coloroutput);
-    }
-  }, openingdelay);
+      counter = updateCounter(counter, cardskipper);
+      let check = cardskipper.reduce((acc, val) => acc + val, 0);
+      if (check == cardskipper.length * 2) {
+        console.log("Finished Running");
+        ingameShowcase_end();
+        logSummary(openedItems, coloroutput);
+      } else {
+        _nextCard();
+      }
+    }, openingdelay);
+  }
+  _nextCard();
 }
 
 // Helper function to execute chest opening script
@@ -688,6 +691,11 @@ async function executeChestScript(customchestlist) {
   function confettiAnimation() {
     const duration = 15 * 1000;
     const animationEnd = Date.now() + duration;
+
+    function randomInRange(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
     const defaults = {
       startVelocity: 30,
       spread: 360,
@@ -695,38 +703,26 @@ async function executeChestScript(customchestlist) {
       zIndex: 0,
     };
 
-    function randomInRange(min, max) {
-      return Math.random() * (max - min) + min;
-    }
-
-    const intervalconfetti = setInterval(() => {
+    function _tick() {
       const timeLeft = animationEnd - Date.now();
-
-      if (timeLeft <= 0) {
-        clearInterval(intervalconfetti);
-        return;
-      }
+      if (timeLeft <= 0) return;
 
       const particleCount = 50 * (timeLeft / duration);
       confetti({
         ...defaults,
         particleCount,
-        origin: {
-          x: randomInRange(0.1, 0.3),
-          y: Math.random() - 0.2,
-        },
+        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
         zIndex: 99999,
       });
       confetti({
         ...defaults,
         particleCount,
-        origin: {
-          x: randomInRange(0.7, 0.9),
-          y: Math.random() - 0.2,
-        },
+        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
         zIndex: 99999,
       });
-    }, 250);
+      requestAnimationFrame(_tick);
+    }
+    requestAnimationFrame(_tick);
   }
 
   //This one handles updatign the counter variable
@@ -874,52 +870,56 @@ async function executeChestScript(customchestlist) {
 
   let openedItems = {};
   let counter = 0;
-  let interval = setInterval(async () => {
-    let chestresult = await openChest(chests[counter]["chestid"]);
-    let resultName = chestresult[translations["name"]];
-    let resultRarity = chestresult[translations["rarity"]];
-    if (resultName) {
-      ingameShowcase(resultName, resultRarity, chests[counter]["name"]);
+  function _nextChest() {
+    setTimeout(async () => {
+      let chestresult = await openChest(chests[counter]["chestid"]);
+      let resultName = chestresult[translations["name"]];
+      let resultRarity = chestresult[translations["rarity"]];
+      if (resultName) {
+        ingameShowcase(resultName, resultRarity, chests[counter]["name"]);
 
-      let translatedRarity = translations[resultRarity];
-      if (translatedRarity == undefined) {
-        translatedRarity = rarity_backup(
-          bvl,
-          "Skin Name",
-          "Rarity",
-          resultName,
-        );
-      }
-      translatedRarity = translatedRarity.toUpperCase();
+        let translatedRarity = translations[resultRarity];
+        if (translatedRarity == undefined) {
+          translatedRarity = rarity_backup(
+            bvl,
+            "Skin Name",
+            "Rarity",
+            resultName,
+          );
+        }
+        translatedRarity = translatedRarity.toUpperCase();
 
-      if (!openedItems[translatedRarity]) {
-        openedItems[translatedRarity] = [];
-      }
-      openedItems[translatedRarity].push(resultName);
+        if (!openedItems[translatedRarity]) {
+          openedItems[translatedRarity] = [];
+        }
+        openedItems[translatedRarity].push(resultName);
 
-      if (
-        translations[resultRarity] == "MYTHICAL" ||
-        translations[resultRarity] == "PARANORMAL"
-      ) {
-        confettiAnimation();
+        if (
+          translations[resultRarity] == "MYTHICAL" ||
+          translations[resultRarity] == "PARANORMAL"
+        ) {
+          confettiAnimation();
+        }
+      } else if (chestresult["code"] == 9910) {
+        console.log("RATELIMIT");
+      } else {
+        chestskipper[counter]++;
+        console.log("DON'T WORRY ABOUT THE ERROR");
+        console.log("THE CHEST THAT IT TRIED TO OPEN IS NOT AVAILABLE ANYMORE");
+        console.log("IT WILL SKIP THAT ONE AFTER 2 FAILS");
       }
-    } else if (chestresult["code"] == 9910) {
-      console.log("RATELIMIT");
-    } else {
-      chestskipper[counter]++;
-      console.log("DON'T WORRY ABOUT THE ERROR");
-      console.log("THE CHEST THAT IT TRIED TO OPEN IS NOT AVAILABLE ANYMORE");
-      console.log("IT WILL SKIP THAT ONE AFTER 2 FAILS");
-    }
-    counter = updateCounter(counter, chestskipper);
-    let check = chestskipper.reduce((acc, val) => acc + val, 0);
-    if (check == chestskipper.length * 2) {
-      clearInterval(interval);
-      console.log("Finished Running");
-      ingameShowcase_end();
-      logSummary(openedItems, coloroutput);
-    }
-  }, openingdelay);
+      counter = updateCounter(counter, chestskipper);
+      let check = chestskipper.reduce((acc, val) => acc + val, 0);
+      if (check == chestskipper.length * 2) {
+        console.log("Finished Running");
+        ingameShowcase_end();
+        logSummary(openedItems, coloroutput);
+      } else {
+        _nextChest();
+      }
+    }, openingdelay);
+  }
+  _nextChest();
 }
 
 async function start_chests_input(inputarray) {

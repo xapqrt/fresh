@@ -16,12 +16,16 @@ function installBhopHook() {
   var _holdMs = 8;
   var _jitterMs = 1;
   var _jitterAccum = 0;
+  var _pendingKeys = [];
 
-  function _sendKey(key, down) {
-    if (!_ipc) return;
-    try {
-      _ipc.send('bhop-key', { key: key, down: down });
-    } catch (e) {}
+  function _queueKey(key, down) {
+    _pendingKeys.push({ key, down });
+  }
+
+  function _flushKeys() {
+    if (!_pendingKeys.length || !_ipc) { _pendingKeys = []; return; }
+    _ipc.send('bhop-keys', _pendingKeys);
+    _pendingKeys = [];
   }
 
   function _pollGround() {
@@ -36,8 +40,8 @@ function installBhopHook() {
     if (!_strafeKey) return;
     var physicallyHeld = (_strafeKey === 'a' && _aDown) || (_strafeKey === 'd' && _dDown);
     if (physicallyHeld) { _strafePhysDown = true; return; }
-    _sendKey(_strafeKey, false);
-    _sendKey(_strafeKey, true);
+    _queueKey(_strafeKey, false);
+    _queueKey(_strafeKey, true);
     _strafePhysDown = true;
   }
 
@@ -48,26 +52,30 @@ function installBhopHook() {
 
     if (grounded === true) {
       _lastToggle = now - _holdMs - _jitterMs;
-      if (_phase === 1) { _qDownPhys = false; _sendKey('q', false); _phase = 2; }
-      _qDownPhys = true; _sendKey('q', true);
+      if (_phase === 1) { _qDownPhys = false; _queueKey('q', false); _phase = 2; }
+      _qDownPhys = true; _queueKey('q', true);
       _pulseStrafe();
       _phase = 1;
       _jitterAccum = Math.random() * _jitterMs;
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (grounded === false) {
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (_lastToggle !== 0 && performance.now() - now > 3.6) {
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (now - _lastToggle < _holdMs + _jitterAccum) {
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
@@ -76,12 +84,13 @@ function installBhopHook() {
     _jitterAccum = Math.random() * _jitterMs;
 
     if (_phase === 1) {
-      _qDownPhys = false; _sendKey('q', false); _phase = 2;
+      _qDownPhys = false; _queueKey('q', false); _phase = 2;
     } else if (_phase === 2) {
-      _qDownPhys = true; _sendKey('q', true);
+      _qDownPhys = true; _queueKey('q', true);
       _pulseStrafe();
       _phase = 1;
     }
+    _flushKeys();
     _rAFId = requestAnimationFrame(_tick);
   }
 
@@ -90,8 +99,9 @@ function installBhopHook() {
     _bhopOn = true;
     _strafeKey = _aDown ? 'a' : (_dDown ? 'd' : null);
     _strafePhysDown = false;
-    _phase = 1; _qDownPhys = true; _sendKey('q', true);
+    _phase = 1; _qDownPhys = true; _queueKey('q', true);
     _lastToggle = performance.now();
+    _flushKeys();
     _rAFId = requestAnimationFrame(_tick);
   }
 
@@ -99,12 +109,13 @@ function installBhopHook() {
     if (!_bhopOn) return;
     _bhopOn = false;
     if (_rAFId !== null) { cancelAnimationFrame(_rAFId); _rAFId = null; }
-    if (_qDownPhys) { _qDownPhys = false; _sendKey('q', false); }
+    if (_qDownPhys) { _qDownPhys = false; _queueKey('q', false); }
     if (_strafePhysDown && _strafeKey) {
       var physicallyHeld = (_strafeKey === 'a' && _aDown) || (_strafeKey === 'd' && _dDown);
-      if (!physicallyHeld) _sendKey(_strafeKey, false);
+      if (!physicallyHeld) _queueKey(_strafeKey, false);
       _strafePhysDown = false;
     }
+    _flushKeys();
     _strafeKey = null;
     _phase = 0;
   }

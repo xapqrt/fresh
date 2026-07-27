@@ -56,8 +56,9 @@ ipcMain.handle("screenshot", async () => {
   return null;
 });
 
-ipcMain.on("bhop-key", (_, { key, down }) => {
-  if (gameWindow && !gameWindow.isDestroyed()) {
+ipcMain.on("bhop-keys", (_, events) => {
+  if (!gameWindow || gameWindow.isDestroyed()) return;
+  for (const { key, down } of events) {
     gameWindow.webContents.sendInputEvent({
       type: down ? "keyDown" : "keyUp",
       keyCode: key.toUpperCase(),

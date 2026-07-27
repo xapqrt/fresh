@@ -3,8 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 function applySwitches() {
-  let use_angle_metal = false;
-  let use_angle_opengl = false;
+  let _useAngleOverride = null;
   let in_process_gpu = false;
 
   try {
@@ -12,19 +11,17 @@ function applySwitches() {
     if (fs.existsSync(configPath)) {
       const stored = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       const s = stored?.settings || stored || {};
-      if (typeof s.use_angle_metal === "boolean") use_angle_metal = s.use_angle_metal;
-      if (typeof s.use_angle_opengl === "boolean") use_angle_opengl = s.use_angle_opengl;
+      if (s.use_angle_opengl === true) _useAngleOverride = 'opengl';
+      else if (s.use_angle_metal === true) _useAngleOverride = 'metal';
       if (typeof s.in_process_gpu === "boolean") in_process_gpu = s.in_process_gpu;
     }
   } catch (e) {}
 
   app.commandLine.appendSwitch("high-dpi-support", "1");
 
-  if (process.platform === "darwin") {
-    if (use_angle_metal && !use_angle_opengl) {
-      app.commandLine.appendSwitch("use-gl", "angle");
-      app.commandLine.appendSwitch("use-angle", "metal");
-    }
+  if (process.platform === "darwin" && _useAngleOverride !== 'opengl') {
+    app.commandLine.appendSwitch("use-gl", "angle");
+    app.commandLine.appendSwitch("use-angle", "metal");
   }
 
   if (in_process_gpu) {
@@ -43,8 +40,8 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-features",
     "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter");
 
-
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=64 --sparkplug --turbo-fast-api-calls --expose-gc");
+  app.commandLine.appendSwitch("v8-cache-options", "code");
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=128 --sparkplug --turbo-fast-api-calls --expose-gc");
 
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");

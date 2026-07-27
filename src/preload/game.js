@@ -59,6 +59,7 @@ function injectMenu() {
     _menuEl.id = 'dawn-menu-container';
     _menuEl.innerHTML = html;
     _menuEl.style.display = 'none';
+    _menuEl.style.willChange = 'transform';
     document.body.appendChild(_menuEl);
 
     if (!_menuCssInjected) {
@@ -69,9 +70,42 @@ function injectMenu() {
       document.head.appendChild(style);
       _menuCssInjected = true;
     }
+
+    _menuEl.addEventListener('change', (e) => {
+      const el = e.target.closest('[data-setting]');
+      if (!el) return;
+      const key = el.dataset.setting;
+      const val = el.type === 'checkbox' ? el.checked : el.value;
+      try {
+        require('electron').ipcRenderer.send('update-setting', key, val);
+        document.dispatchEvent(new CustomEvent('juice-settings-changed', {
+          detail: { setting: key, value: val }
+        }));
+      } catch (e) {}
+    });
   } catch (e) {
     console.warn('[Dawn] Menu injection failed:', e.message);
   }
+}
+
+function loadSettingsIntoMenu() {
+  if (!_menuEl) return;
+  try {
+    const s = require('electron').ipcRenderer.sendSync('get-settings');
+    if (!s) return;
+    _menuEl.querySelectorAll('[data-setting]').forEach(el => {
+      const key = el.dataset.setting;
+      const val = s[key];
+      if (val === undefined) return;
+      if (el.type === 'checkbox') {
+        el.checked = Boolean(val);
+      } else if (el.type === 'color') {
+        el.value = val || '#FFFFFF';
+      } else {
+        el.value = val;
+      }
+    });
+  } catch (e) {}
 }
 
 function toggleMenu() {
@@ -79,6 +113,7 @@ function toggleMenu() {
   if (!_menuEl) return;
   const shown = _menuEl.style.display !== 'none';
   _menuEl.style.display = shown ? 'none' : '';
+  if (!shown) loadSettingsIntoMenu();
 }
 
 window.addEventListener("keydown", (e) => {
@@ -142,6 +177,65 @@ document.addEventListener("juice-settings-changed", (e) => {
     const s = require('electron').ipcRenderer.sendSync('get-settings');
     updateWeaponConfig(s);
   } catch (e) {}
+});
+
+let _frameTimeOverlay = null;
+let _frameTimeActive = false;
+let _ftHistory = [];
+let _ftRAF = null;
+
+function toggleFrameTimeLogger() {
+  _frameTimeActive = !_frameTimeActive;
+  if (!_frameTimeActive) {
+    if (_ftRAF) { cancelAnimationFrame(_ftRAF); _ftRAF = null; }
+    if (_frameTimeOverlay) { _frameTimeOverlay.remove(); _frameTimeOverlay = null; }
+    return;
+  }
+
+  if (!_frameTimeOverlay) {
+    _frameTimeOverlay = document.createElement('div');
+    _frameTimeOverlay.id = 'dawn-ft-logger';
+    Object.assign(_frameTimeOverlay.style, {
+      position: 'fixed', top: '8px', right: '8px',
+      background: 'rgba(0,0,0,0.75)', color: '#0f0',
+      fontFamily: 'monospace', fontSize: '12px',
+      padding: '8px 12px', borderRadius: '4px',
+      zIndex: '2147483646', pointerEvents: 'none',
+      whiteSpace: 'pre',
+    });
+    document.body.appendChild(_frameTimeOverlay);
+  }
+
+  _ftHistory = [];
+  let lastT = performance.now();
+
+  function _sample(t) {
+    const dt = t - lastT;
+    lastT = t;
+    _ftHistory.push(dt);
+    if (_ftHistory.length > 120) _ftHistory.shift();
+
+    const len = _ftHistory.length;
+    if (len > 1) {
+      let min = Infinity, max = -Infinity, sum = 0;
+      for (let i = 0; i < len; i++) {
+        const v = _ftHistory[i];
+        if (v < min) min = v;
+        if (v > max) max = v;
+        sum += v;
+      }
+      const avg = sum / len;
+      const fps = 1000 / avg;
+      _frameTimeOverlay.textContent =
+        `FT min ${min.toFixed(2)}ms  max ${max.toFixed(2)}ms  avg ${avg.toFixed(2)}ms\nFPS ${fps.toFixed(0)}  samples ${len}`;
+    }
+    if (_frameTimeActive) _ftRAF = requestAnimationFrame(_sample);
+  }
+  _ftRAF = requestAnimationFrame(_sample);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'F9') { e.preventDefault(); toggleFrameTimeLogger(); }
 });
 
 if (document.readyState === "loading") {
