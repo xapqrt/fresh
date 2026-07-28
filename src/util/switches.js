@@ -38,7 +38,7 @@ function applySwitches() {
   app.commandLine.appendSwitch("enable-features",
     "ParallelDownloading,CanvasOopRasterization");
   app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter");
+    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,CoalescedMouseEvent,PointerEventCoalescing");
 
   app.commandLine.appendSwitch("v8-cache-options", "code");
   app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=128 --sparkplug --turbo-fast-api-calls --expose-gc");

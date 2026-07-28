@@ -1,11 +1,12 @@
-const { installBhopHook } = require("./game/bhop");
-require("../addons/Custom Skin Link.js");
+const fs = require('fs');
+const path = require('path');
+
+let installBhopHook = null;
+try { ({ installBhopHook } = require("./game/bhop")); } catch (e) { console.error('[Dawn] bhop load failed:', e); }
+try { require("../addons/Custom Skin Link.js"); } catch (e) { console.error('[Dawn] Custom Skin Link load failed:', e); }
 
 const weaponHook = require('../webgl/weapon-hook');
 const observerRouter = require('../dom/observer-router');
-
-const fs = require('fs');
-const path = require('path');
 
 const _cssStyleId = "dawn-custom-css";
 const _advancedStyleId = "dawn-advanced-css";
@@ -55,12 +56,16 @@ function injectMenu() {
   if (_menuEl) return;
   try {
     const html = fs.readFileSync(path.join(__dirname, '../assets/html/menu.html'), 'utf-8');
-    _menuEl = document.createElement('div');
-    _menuEl.id = 'dawn-menu-container';
-    _menuEl.innerHTML = html;
-    _menuEl.style.display = 'none';
-    _menuEl.style.willChange = 'transform';
-    document.body.appendChild(_menuEl);
+    const el = document.createElement('div');
+    el.id = 'dawn-menu-container';
+    el.innerHTML = html;
+    el.style.willChange = 'transform';
+    document.body.appendChild(el);
+
+    const menuEl = el.querySelector('.menu');
+    if (menuEl && menuEl.getAttribute('data-active') === 'false') {
+      menuEl.setAttribute('data-active', 'true');
+    }
 
     if (!_menuCssInjected) {
       const css = fs.readFileSync(path.join(__dirname, '../assets/css/menu.css'), 'utf-8');
@@ -71,11 +76,11 @@ function injectMenu() {
       _menuCssInjected = true;
     }
 
-    _menuEl.addEventListener('change', (e) => {
-      const el = e.target.closest('[data-setting]');
-      if (!el) return;
-      const key = el.dataset.setting;
-      const val = el.type === 'checkbox' ? el.checked : el.value;
+    el.addEventListener('change', (e) => {
+      const target = e.target.closest('[data-setting]');
+      if (!target) return;
+      const key = target.dataset.setting;
+      const val = target.type === 'checkbox' ? target.checked : target.value;
       try {
         require('electron').ipcRenderer.send('update-setting', key, val);
         document.dispatchEvent(new CustomEvent('juice-settings-changed', {
@@ -83,6 +88,8 @@ function injectMenu() {
         }));
       } catch (e) {}
     });
+
+    _menuEl = el;
   } catch (e) {
     console.warn('[Dawn] Menu injection failed:', e.message);
   }
@@ -111,7 +118,10 @@ function loadSettingsIntoMenu() {
 function toggleMenu() {
   injectMenu();
   if (!_menuEl) return;
-  const shown = _menuEl.style.display !== 'none';
+  const el = _menuEl.querySelector('.menu');
+  if (!el) return;
+  const shown = el.getAttribute('data-active') === 'true';
+  el.setAttribute('data-active', shown ? 'false' : 'true');
   _menuEl.style.display = shown ? 'none' : '';
   if (!shown) loadSettingsIntoMenu();
 }
@@ -240,13 +250,13 @@ document.addEventListener('keydown', (e) => {
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
-    installBhopHook();
+    if (installBhopHook) installBhopHook();
     loadCustomCSS();
     weaponHook.hookWebGL();
     observerRouter.start();
   });
 } else {
-  installBhopHook();
+  if (installBhopHook) installBhopHook();
   loadCustomCSS();
   weaponHook.hookWebGL();
   observerRouter.start();

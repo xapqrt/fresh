@@ -1,0 +1,49 @@
+#!/bin/bash
+# run-app - ensures dependencies then launches Electron app
+
+# Stop on errors
+set -e
+
+# Change to script directory (project root)
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+cd "$SCRIPT_DIR"
+
+# Clean install dependencies forcefully
+npm install --force --legacy-peer-deps --ignore-scripts
+
+# Wait for electron binary to be available (might take a moment)
+sleep 5
+
+# Locate electron binary
+ELECTRON_BIN=$(npx which electron 2>/dev/null || echo "./node_modules/.bin/electron")
+
+# Verify electron exists
+if [ ! -x "$ELECTRON_BIN" ]; then
+  echo "Electron binary not found at $ELECTRON_BIN. Attempting fresh install..."
+  npm install electron@32.4.0 --save-dev
+  ELECTRON_BIN="./node_modules/.bin/electron"
+fi
+
+# Ensure assets directory and splash.html exist
+ASSETS_DIR="$SCRIPT_DIR/assets"
+if [ ! -f "$ASSETS_DIR/splash.html" ]; then
+  mkdir -p "$ASSETS_DIR"
+  cat > "$ASSETS_DIR/splash.html" << 'HTMLEOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Dawn Fresh</title>
+  <style>
+    body { margin: 0; background: #0a0a0a; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; color: #fff; }
+    .loader { font-size: 24px; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+  </style>
+</head>
+<body><div class="loader">Loading Dawn...</div></body>
+</html>
+HTMLEOF
+fi
+
+# Launch the app
+exec "$ELECTRON_BIN" src/main.js "$@"

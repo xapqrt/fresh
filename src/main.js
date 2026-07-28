@@ -60,7 +60,7 @@ ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   for (const { key, down } of events) {
     gameWindow.webContents.sendInputEvent({
-      type: down ? "keyDown" : "keyUp",
+      type: down ? "rawKeyDown" : "keyUp",
       keyCode: key.toUpperCase(),
     });
   }
@@ -229,13 +229,14 @@ const createWindow = () => {
       contextIsolation: false,
       sandbox: false,
       webSecurity: false,
-      pointerLockV2: true,
-      scrollBounce: false,
-      pinchZoom: false,
-      experimentalFeatures: false,
-      backgroundThrottling: false,
-      spellcheck: false,
-      enableWebSQL: false,
+pointerLockV2: true,
+    scrollBounce: false,
+    pinchZoom: false,
+    experimentalFeatures: false,
+    backgroundThrottling: false,
+    spellcheck: false,
+    enableWebSQL: false,
+    enableBlinkFeatures: 'PointerLockV2,PointerRawUpdate',
     },
     backgroundColor: "#141414",
     paintWhenInitiallyHidden: true,
