@@ -1,12 +1,11 @@
-const fs = require('fs');
-const path = require('path');
-
-let installBhopHook = null;
-try { ({ installBhopHook } = require("./game/bhop")); } catch (e) { console.error('[Dawn] bhop load failed:', e); }
-try { require("../addons/Custom Skin Link.js"); } catch (e) { console.error('[Dawn] Custom Skin Link load failed:', e); }
+const { installBhopHook } = require("./game/bhop");
+require("../addons/Custom Skin Link.js");
 
 const weaponHook = require('../webgl/weapon-hook');
 const observerRouter = require('../dom/observer-router');
+
+const fs = require('fs');
+const path = require('path');
 
 const _cssStyleId = "dawn-custom-css";
 const _advancedStyleId = "dawn-advanced-css";
@@ -17,8 +16,12 @@ let _menuCssInjected = false;
 
 let _settings = null;
 try { _settings = require('electron').ipcRenderer.sendSync('get-settings'); } catch (e) {}
-
-const _menuKeybind = _settings?.menu_keybind || 'ShiftRight';
+let _localSettings = _settings ? { ..._settings } : null;
+try {
+  require('electron').ipcRenderer.on('settings-updated', (_event, s) => {
+    _localSettings = s;
+  });
+} catch (e) {}
 
 const createWeaponConfig = (s) => ({
   colorEnabled: s.weapon_color ?? false,
@@ -54,18 +57,18 @@ if (_settings) {
 
 function injectMenu() {
   if (_menuEl) return;
+  if (!document.body) {
+    document.addEventListener('DOMContentLoaded', () => injectMenu(), { once: true });
+    return;
+  }
   try {
     const html = fs.readFileSync(path.join(__dirname, '../assets/html/menu.html'), 'utf-8');
-    const el = document.createElement('div');
-    el.id = 'dawn-menu-container';
-    el.innerHTML = html;
-    el.style.willChange = 'transform';
-    document.body.appendChild(el);
-
-    const menuEl = el.querySelector('.menu');
-    if (menuEl && menuEl.getAttribute('data-active') === 'false') {
-      menuEl.setAttribute('data-active', 'true');
-    }
+    _menuEl = document.createElement('div');
+    _menuEl.id = 'dawn-menu-container';
+    _menuEl.innerHTML = html;
+    _menuEl.style.display = 'none';
+    _menuEl.style.willChange = 'transform';
+    document.body.appendChild(_menuEl);
 
     if (!_menuCssInjected) {
       const css = fs.readFileSync(path.join(__dirname, '../assets/css/menu.css'), 'utf-8');
@@ -76,20 +79,24 @@ function injectMenu() {
       _menuCssInjected = true;
     }
 
-    el.addEventListener('change', (e) => {
-      const target = e.target.closest('[data-setting]');
-      if (!target) return;
-      const key = target.dataset.setting;
-      const val = target.type === 'checkbox' ? target.checked : target.value;
+    const menuEl = _menuEl.querySelector('.menu');
+    if (menuEl && !menuEl.hasAttribute('data-active')) {
+      menuEl.setAttribute('data-active', 'false');
+    }
+
+    _menuEl.addEventListener('change', (e) => {
+      const el = e.target.closest('[data-setting]');
+      if (!el) return;
+      const key = el.dataset.setting;
+      const val = el.type === 'checkbox' ? el.checked : el.value;
       try {
         require('electron').ipcRenderer.send('update-setting', key, val);
+        if (_localSettings) _localSettings[key] = val;
         document.dispatchEvent(new CustomEvent('juice-settings-changed', {
           detail: { setting: key, value: val }
         }));
       } catch (e) {}
     });
-
-    _menuEl = el;
   } catch (e) {
     console.warn('[Dawn] Menu injection failed:', e.message);
   }
@@ -97,9 +104,9 @@ function injectMenu() {
 
 function loadSettingsIntoMenu() {
   if (!_menuEl) return;
+  const s = _localSettings;
+  if (!s) return;
   try {
-    const s = require('electron').ipcRenderer.sendSync('get-settings');
-    if (!s) return;
     _menuEl.querySelectorAll('[data-setting]').forEach(el => {
       const key = el.dataset.setting;
       const val = s[key];
@@ -115,32 +122,30 @@ function loadSettingsIntoMenu() {
   } catch (e) {}
 }
 
-function toggleMenu() {
+function setMenuOpen(open) {
   injectMenu();
   if (!_menuEl) return;
-  const el = _menuEl.querySelector('.menu');
-  if (!el) return;
-  const shown = el.getAttribute('data-active') === 'true';
-  el.setAttribute('data-active', shown ? 'false' : 'true');
-  _menuEl.style.display = shown ? 'none' : '';
-  if (!shown) loadSettingsIntoMenu();
+  const menuEl = _menuEl.querySelector('.menu');
+  if (!menuEl) return;
+  menuEl.setAttribute('data-active', open ? 'true' : 'false');
+  _menuEl.style.display = open ? '' : 'none';
+  if (open) loadSettingsIntoMenu();
 }
 
-window.addEventListener("keydown", (e) => {
-  if (e.code === _menuKeybind) {
-    e.stopImmediatePropagation();
-    toggleMenu();
-  }
-}, true);
+function toggleMenu() {
+  injectMenu();
+  const menuEl = _menuEl?.querySelector('.menu');
+  const open = menuEl?.getAttribute('data-active') === 'true';
+  setMenuOpen(!open);
+}
 
 try { require('electron').ipcRenderer.on('toggle-menu', toggleMenu); } catch (e) {}
 
 async function loadCustomCSS() {
-  try {
-    const _ipcCSS = require('electron').ipcRenderer;
-    const settings = _ipcCSS.sendSync('get-settings');
-    if (!settings) return;
+  const settings = _localSettings;
+  if (!settings) return;
 
+  try {
     const injectStyle = (id, text) => {
       let el = document.getElementById(id);
       if (el) el.remove();
@@ -183,10 +188,7 @@ document.addEventListener("juice-settings-changed", (e) => {
   if (["css_link", "css_enabled", "advanced_css"].includes(setting)) {
     loadCustomCSS();
   }
-  try {
-    const s = require('electron').ipcRenderer.sendSync('get-settings');
-    updateWeaponConfig(s);
-  } catch (e) {}
+  if (_localSettings) updateWeaponConfig(_localSettings);
 });
 
 let _frameTimeOverlay = null;
@@ -248,15 +250,23 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'F9') { e.preventDefault(); toggleFrameTimeLogger(); }
 });
 
+window.dumpCookies = async () => {
+  try {
+    const data = await require('electron').ipcRenderer.invoke('dump-cookies');
+    console.table(data);
+    return data;
+  } catch (e) { console.warn('dumpCookies failed:', e); }
+};
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
-    if (installBhopHook) installBhopHook();
+    installBhopHook();
     loadCustomCSS();
     weaponHook.hookWebGL();
     observerRouter.start();
   });
 } else {
-  if (installBhopHook) installBhopHook();
+  installBhopHook();
   loadCustomCSS();
   weaponHook.hookWebGL();
   observerRouter.start();

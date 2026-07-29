@@ -18,6 +18,8 @@ function applySwitches() {
   } catch (e) {}
 
   app.commandLine.appendSwitch("high-dpi-support", "1");
+  app.commandLine.appendSwitch("user-agent",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
 
   if (process.platform === "darwin" && _useAngleOverride !== 'opengl') {
     app.commandLine.appendSwitch("use-gl", "angle");
@@ -34,11 +36,13 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
-  // ─── Features ────────────────────────────────────────────────────────────
   app.commandLine.appendSwitch("enable-features",
     "ParallelDownloading,CanvasOopRasterization");
   app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,CoalescedMouseEvent,PointerEventCoalescing");
+    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,TrackingPrevention,ThirdPartyStoragePartitioning,Tpcd,TpcdMitigations");
+
+  app.commandLine.appendSwitch("disable-blink-features",
+    "ThirdPartyStoragePartitioning,TrustedTypes");
 
   app.commandLine.appendSwitch("v8-cache-options", "code");
   app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=128 --sparkplug --turbo-fast-api-calls --expose-gc");

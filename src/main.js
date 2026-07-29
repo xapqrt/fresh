@@ -7,7 +7,6 @@ const Store = require("electron-store");
 const fs = require("fs");
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: "https", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true } },
   { scheme: "dawn-patch", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, standard: true, corsEnabled: true } },
   { scheme: "dawnclient", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, standard: true, corsEnabled: true } },
 ]);
@@ -28,6 +27,31 @@ store.set("settings", settings);
 
 let gameWindow = null;
 let splashWindow = null;
+const getGameWindow = () => gameWindow;
+
+function matchesKeybindMain(input, bind) {
+  if (!bind) return false;
+  if (bind === 'Shift') return input.code === 'ShiftLeft' || input.code === 'ShiftRight';
+  if (bind === 'RightShift' || bind === 'ShiftRight') return input.code === 'ShiftRight';
+  if (bind === 'LeftShift' || bind === 'ShiftLeft') return input.code === 'ShiftLeft';
+  return input.code === bind || input.key === bind;
+}
+
+// ── Synthetic key tracking ────────────────────────────────────────────────
+const _syntheticKeys = new Set();
+
+function releaseSyntheticKeys() {
+  if (!gameWindow || gameWindow.isDestroyed()) return;
+  for (const key of _syntheticKeys) {
+    try {
+      gameWindow.webContents.sendInputEvent({
+        type: "keyUp",
+        keyCode: key,
+      });
+    } catch (e) {}
+  }
+  _syntheticKeys.clear();
+}
 
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
@@ -35,6 +59,9 @@ ipcMain.handle("get-settings", async () => settings);
 ipcMain.on("update-setting", (e, key, value) => {
   settings[key] = value;
   store.set("settings", settings);
+  if (gameWindow && !gameWindow.isDestroyed()) {
+    gameWindow.webContents.send("settings-updated", settings);
+  }
 });
 ipcMain.handle("fs-exists", async (_, p) => { try { return fs.existsSync(p); } catch { return false; } });
 ipcMain.handle("fs-read-file", async (_, p, enc) => { try { return fs.readFileSync(p, enc || "utf-8"); } catch { return null; } });
@@ -42,6 +69,17 @@ ipcMain.handle("fs-write-file", async (_, p, content) => { try { fs.mkdirSync(pa
 ipcMain.handle("fs-readdir", async (_, p) => { try { return fs.readdirSync(p); } catch { return []; } });
 ipcMain.handle("fs-mkdir", async (_, p) => { try { fs.mkdirSync(p, { recursive: true }); return true; } catch { return false; } });
 ipcMain.handle("get-documents-path", async () => app.getPath("documents"));
+ipcMain.handle("dump-cookies", async () => {
+  const domains = ['https://kirka.io', 'https://api2.kirka.io', 'https://login.xsolla.com', 'https://accounts.google.com'];
+  const result = {};
+  for (const url of domains) {
+    try {
+      const cookies = await session.defaultSession.cookies.get({ url });
+      result[url] = cookies.map(c => ({ name: c.name, domain: c.domain, path: c.path, sameSite: c.sameSite, secure: c.secure, httpOnly: c.httpOnly, value: c.value.slice(0,30) }));
+    } catch (e) { result[url] = `error: ${e.message}`; }
+  }
+  return result;
+});
 ipcMain.handle("clipboard-write", async (_, text) => { try { require("electron").clipboard.writeText(text); } catch {} });
 ipcMain.handle("clipboard-read", async () => { try { return require("electron").clipboard.readText(); } catch { return ""; } });
 ipcMain.on("open-external", (_, url) => { try { shell.openExternal(url); } catch {} });
@@ -59,9 +97,17 @@ ipcMain.handle("screenshot", async () => {
 ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   for (const { key, down } of events) {
+    const code = key.toUpperCase();
+    if (down) {
+      if (_syntheticKeys.has(code)) continue;
+      _syntheticKeys.add(code);
+    } else {
+      if (!_syntheticKeys.has(code)) continue;
+      _syntheticKeys.delete(code);
+    }
     gameWindow.webContents.sendInputEvent({
-      type: down ? "rawKeyDown" : "keyUp",
-      keyCode: key.toUpperCase(),
+      type: down ? "keyDown" : "keyUp",
+      keyCode: code,
     });
   }
 });
@@ -97,7 +143,6 @@ function fetchText(url) {
 const initResourceSwapper = () => {
   const customDir = path.join(app.getPath("userData"), "custom");
   const files = {};
-  const filter = { urls: [] };
 
   if (require("fs").existsSync(customDir)) {
     const walk = (dir) => {
@@ -108,18 +153,16 @@ const initResourceSwapper = () => {
         else {
           const rel = full.replace(customDir + path.sep, "").replace(/\\/g, "/");
           files[rel] = full;
-          filter.urls.push("*://*/*" + rel);
         }
       }
     };
     walk(customDir);
   }
 
-  if (filter.urls.length) {
+  if (Object.keys(files).length) {
     protocol.handle("dawnclient", (request) => {
-      const url = new URL(request.url);
-      const path_ = url.pathname.slice(1);
-      const file = files[path_];
+      const urlPath = new URL(request.url).pathname.replace(/^\//, '');
+      const file = files[urlPath];
       if (file && require("fs").existsSync(file)) {
         return new Response(require("fs").createReadStream(file));
       }
@@ -127,7 +170,7 @@ const initResourceSwapper = () => {
     });
   }
 
-  return { files, filter };
+  return files;
 };
 
 const initPatchProtocol = () => {
@@ -138,6 +181,9 @@ const initPatchProtocol = () => {
     protocol.handle('dawn-patch', async (request) => {
       const urlParams = new URL(request.url);
       const targetScriptUrl = urlParams.searchParams.get('url');
+      if (!targetScriptUrl) {
+        return new Response("Missing url param", { status: 400 });
+      }
 
       const serve = (body, status = 200) => new Response(body, {
         status,
@@ -153,10 +199,12 @@ const initPatchProtocol = () => {
 
       try {
         let code = await fetchText(targetScriptUrl);
+        let patchMeta = { zoom: false, onGround: false };
 
         const zoomTarget = "f5['a'][hF]";
         if (code.includes(zoomTarget)) {
           code = code.replace(zoomTarget, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
+          patchMeta.zoom = true;
         } else {
           console.warn('[dawn-patch] WARNING: zoom pattern not found — bundle format may have changed');
         }
@@ -164,18 +212,20 @@ const initPatchProtocol = () => {
         const onGroundRe = /this\['onGround'\]\s*=\s*([^;,]+)/;
         if (onGroundRe.test(code)) {
           code = code.replace(onGroundRe, "this['onGround']=$1,window.__onGround=$1");
+          patchMeta.onGround = true;
         } else {
           console.warn('[dawn-patch] WARNING: onGround pattern not found — bhop may be broken');
         }
 
         code += `\n//# sourceURL=${targetScriptUrl}`;
+        code += `\n// dawn-patch: zoom=${patchMeta.zoom} onGround=${patchMeta.onGround}`;
 
         _cacheSet(targetScriptUrl, code);
 
         return serve(code);
       } catch (err) {
-        console.error('dawn-patch fetch failed:', err);
-        return serve("console.error('dawn-patch failed');", 500);
+        console.error('[dawn-patch] fetch failed for', targetScriptUrl, err);
+        return serve("console.error('dawn-patch: fetch failed');", 500);
       }
     });
   } catch (e) {
@@ -211,16 +261,12 @@ const createSplashWindow = () => {
 };
 
 const createWindow = () => {
-  // Note: Don't add --enable-gpu-rasterization, --enable-zero-copy, --disable-gpu-vsync etc.
-  // These crash the GPU process on Apple Silicon Metal and cause Chromium to fall
-  // back to SwiftShader software rendering (~2-5 FPS). switches.js handles safe flags.
-  
   gameWindow = new BrowserWindow({
     width: 1280,
     height: 720,
     minWidth: 800,
     minHeight: 600,
-    show: false, // FIX: Don't show until ready-to-show
+    show: false,
     frame: true,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
@@ -229,45 +275,40 @@ const createWindow = () => {
       contextIsolation: false,
       sandbox: false,
       webSecurity: false,
-pointerLockV2: true,
-    scrollBounce: false,
-    pinchZoom: false,
-    experimentalFeatures: false,
-    backgroundThrottling: false,
-    spellcheck: false,
-    enableWebSQL: false,
-    enableBlinkFeatures: 'PointerLockV2,PointerRawUpdate',
+      pointerLockV2: true,
+      scrollBounce: false,
+      pinchZoom: false,
+      experimentalFeatures: false,
+      backgroundThrottling: false,
+      spellcheck: false,
+      enableWebSQL: false,
+      enableBlinkFeatures: 'PointerLockV2,PointerRawUpdate',
     },
     backgroundColor: "#141414",
     paintWhenInitiallyHidden: true,
   });
 
-  // FIX: Show window as early as possible to eliminate black screen
   gameWindow.once("ready-to-show", () => {
     if (gameWindow && !gameWindow.isDestroyed()) {
       gameWindow.show();
-      
-      // Boost renderer process priority
-      try { 
-        os.setPriority(gameWindow.webContents.getProcessId(), -10); 
+      try {
+        os.setPriority(gameWindow.webContents.getProcessId(), -10);
       } catch (e) {}
-      
       if (process.platform === "darwin" && settings.auto_fullscreen) {
         gameWindow.setFullScreen(true);
       }
     }
   });
 
-  // Also show on did-finish-load as fallback
   gameWindow.webContents.once("did-finish-load", () => {
     if (gameWindow && !gameWindow.isVisible() && !gameWindow.isDestroyed()) {
       gameWindow.show();
     }
   });
 
-  // FIX: Handle render process gone gracefully
   gameWindow.webContents.on("render-process-gone", (event, details) => {
     console.log("[game] Renderer process gone:", details.reason);
+    releaseSyntheticKeys();
     if (gameWindow && !gameWindow.isDestroyed()) {
       setTimeout(() => {
         try {
@@ -286,12 +327,15 @@ pointerLockV2: true,
   });
 
   gameWindow.webContents.on("did-fail-load", (_, code, desc) => {
-    if (code === -3 || code === -6) { // Connection timeout/reset
+    if (code === -3 || code === -6) {
       setTimeout(() => { try { gameWindow.reload(); } catch (e) {} }, 2000);
     }
   });
 
-  // Track in-page navigation to detect match start/end
+  gameWindow.webContents.on("did-start-navigation", () => {
+    releaseSyntheticKeys();
+  });
+
   gameWindow.webContents.on("did-navigate-in-page", (e, url) => {
     gameWindow.webContents.send("url-change", url);
     const wasInMatch = _navIsMatch(_navPreviousUrl);
@@ -305,24 +349,45 @@ pointerLockV2: true,
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 
   gameWindow.on("closed", () => {
+    releaseSyntheticKeys();
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
     ipcMain.removeAllListeners("navigate-home");
     ipcMain.removeAllListeners("screenshot");
     ipcMain.removeAllListeners("toggle-fullscreen");
     ipcMain.removeAllListeners("toggle-devtools");
+    ipcMain.removeAllListeners("bhop-keys");
     gameWindow = null;
   });
 
-  // Set up protocol handlers before loading
-  initPatchProtocol();
-  const swap = initResourceSwapper();
+  gameWindow.on("blur", () => {
+    releaseSyntheticKeys();
+  });
 
-  // FIX: Single webRequest handler for both bundle patching and custom resources
+  gameWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && !input.repeat) {
+      const bind = settings.menu_keybind || 'ShiftRight';
+      if (matchesKeybindMain(input, bind)) {
+        event.preventDefault();
+        gameWindow.webContents.send('toggle-menu');
+      }
+    }
+    if (input.type === 'keyUp') {
+      const bind = settings.menu_keybind || 'ShiftRight';
+      if (matchesKeybindMain(input, bind)) {
+        event.preventDefault();
+      }
+    }
+  });
+
+  initPatchProtocol();
+  const customFiles = initResourceSwapper();
+
   const bundleFilter = { urls: ['*://kirka.io/assets/js/app.*.js'] };
-  const allUrls = swap.filter.urls.length
-    ? [...bundleFilter.urls, ...swap.filter.urls]
-    : bundleFilter.urls;
+  const customFilterUrls = Object.keys(customFiles).length
+    ? Object.keys(customFiles).map(k => '*://*/*' + k)
+    : [];
+  const allUrls = [...bundleFilter.urls, ...customFilterUrls];
 
   session.defaultSession.webRequest.onBeforeRequest(
     { urls: allUrls },
@@ -331,22 +396,31 @@ pointerLockV2: true,
         return callback({ redirectURL: 'dawn-patch://bundle/app.js?url=' + encodeURIComponent(details.url) });
       }
 
-      if (swap.filter.urls.length) {
-        const cleaned = details.url.replace(/https?:\/\//, '').replace(/\?.*/, '').replace(/#.*/, '').replace(/_/g, '');
-        const redirect = 'dawnclient://' + (swap.files[cleaned] || details.url);
-        return callback({ cancel: false, redirectURL: redirect });
+      if (Object.keys(customFiles).length) {
+        try {
+          const urlPath = new URL(details.url).pathname.replace(/^\//, '');
+          if (customFiles[urlPath]) {
+            return callback({ redirectURL: 'dawnclient://' + urlPath });
+          }
+        } catch (e) {}
       }
 
       callback({ cancel: false });
     }
   );
 
-  // Load the game with fallback URL
   const targetUrl = settings.base_url || "https://kirka.io/";
+  setTimeout(() => {
+    const urls = ['https://kirka.io', 'https://api2.kirka.io', 'https://login.xsolla.com'];
+    urls.forEach(u => {
+      session.defaultSession.cookies.get({ url: u }).then(cookies => {
+        console.log(`[cookies] ${u}:`, cookies.map(c => `${c.name}=${c.value} domain=${c.domain} samesite=${c.sameSite}`).join(', ') || '(none)');
+      }).catch(() => {});
+    });
+  }, 10000);
   gameWindow.loadURL(targetUrl);
   gameWindow.maximize();
 
-  // Startup timeout: if the window hasn't shown within 15s, force-show to prevent black hang
   setTimeout(() => {
     if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {
       console.warn("[game] Startup timeout — forcing window show");
@@ -365,15 +439,12 @@ const _navIsMatch = (url) => {
 
 const matchEnded = () => {
   console.log("[game] Match ended — flushing GPU state");
-  
-  // Force V8 GC to free JS wrappers around WebGL resources
   try {
     gameWindow.webContents.executeJavaScript(
       'if (typeof gc === "function") { gc(true); gc(true); }'
     );
   } catch (e) {}
 
-  // FIX: Navigate to lobby instead of full reload to avoid black screen
   setTimeout(() => {
     try {
       if (gameWindow && !gameWindow.isDestroyed()) {
@@ -382,7 +453,6 @@ const matchEnded = () => {
             window.location.href = '${settings.base_url}';
           }
         `).catch(() => {
-          // Fallback to reload if navigation fails
           gameWindow.reload();
         });
       }
@@ -391,14 +461,9 @@ const matchEnded = () => {
 };
 
 const initGame = () => {
-  // Create splash first for immediate visual feedback
   createSplashWindow();
-  
-  // Create game window shortly after
   setTimeout(() => {
     createWindow();
-    
-    // Close splash after game window loads
     if (gameWindow) {
       gameWindow.webContents.once("did-finish-load", () => {
         setTimeout(() => {
@@ -437,6 +502,7 @@ app.on("child-process-gone", (_, details) => {
   if (details.type !== "GPU") return;
   if (_gpuRecovering) return;
   _gpuRecovering = true;
+  releaseSyntheticKeys();
   setTimeout(() => {
     try {
       const gw = getGameWindow();
@@ -452,9 +518,10 @@ app.on("child-process-gone", (_, details) => {
 });
 
 app.on("before-quit", () => {
+  releaseSyntheticKeys();
   globalShortcut.unregisterAll();
 });
 
 app.on("window-all-closed", () => app.quit());
 
-module.exports = { initGame, getGameWindow: () => gameWindow };
+module.exports = { initGame, getGameWindow };

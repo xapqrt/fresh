@@ -57,25 +57,25 @@ function installBhopHook() {
       _pulseStrafe();
       _phase = 1;
       _jitterAccum = Math.random() * _jitterMs;
-      queueMicrotask(_flushKeys);
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (grounded === false) {
-      queueMicrotask(_flushKeys);
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (_lastToggle !== 0 && performance.now() - now > 3.6) {
-      queueMicrotask(_flushKeys);
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (now - _lastToggle < _holdMs + _jitterAccum) {
-      queueMicrotask(_flushKeys);
+      _flushKeys();
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
@@ -90,7 +90,7 @@ function installBhopHook() {
       _pulseStrafe();
       _phase = 1;
     }
-    queueMicrotask(_flushKeys);
+    _flushKeys();
     _rAFId = requestAnimationFrame(_tick);
   }
 
@@ -150,10 +150,6 @@ function installBhopHook() {
   }, true);
 
   window.addEventListener("blur", _reset);
-  document.addEventListener("visibilitychange", function () {
-    if (document.hidden) _reset();
-  });
-  window.addEventListener("pagehide", _reset);
 }
 
 module.exports = { installBhopHook };
