@@ -5,15 +5,19 @@ What we can do to Dawn Client next, **apart from bhop work** (see
 
 Priorities: **P0** = correctness bugs, **P1** = perf (branch goal), **P2** = features/upgrades.
 
-> **Status (all items implemented 2026-07-31)**: 1, 3, 4, 5, 6 → `src/main.js`
-> (`PATCH_VERSION` const, `.p<N>`-suffixed cache files, `pruneBundleCache()`,
-> `PATCHES` needle registry, `applyPatches()` + `patchAndCache()`,
-> `warmBundleCache()` during splash, `[dawn-patch] … in Xms` log, chunk filter).
-> 2 → `__patchMeta` appended to every patched file (preload readout pending).
-> 7 → dead zoom patch removed. 8 → `bhopSlider` (1–5) + `bhopMult` needles patched,
-> `bhop_mult` setting + menu entry + `applyBhopMult()` in `src/preload/game.js`.
-> 9 → `chunk-*.js` routed through dawn-patch. 10 → `__antiSpam` hook (arm/clear)
-> + blind-pulse throttle in `src/preload/game/bhop.js`.
+> **Status**: 1, 3, 4, 5, 6 → `src/main.js` (`PATCH_VERSION` const, `.p<N>`-suffixed
+> cache files, `pruneBundleCache()`, `PATCHES` needle registry, `applyPatches()` +
+> `patchAndCache()`, `warmBundleCache()` during splash, `[dawn-patch] … in Xms` log,
+> chunk filter). 2 → `__patchMeta` appended to every patched file (preload readout
+> pending). 7 → dead zoom patch removed. 9 → `chunk-*.js` routed through dawn-patch.
+> 10 → `__antiSpam` hook (arm/clear) + blind-pulse throttle in
+> `src/preload/game/bhop.js`.
+>
+> **8 (native multiplier override) — removed 2026-07-31 by user decision** (no
+> multipliers, no speed cheats). Slider range and tick-cap patches deleted from the
+> registry, `bhop_mult` setting + menu entry + `applyBhopMult()` reverted.
+> `PATCH_VERSION` bumped to 2 so the multiplier-tainted `.p1` cache cannot be served.
+> The game's own 1–3x slide-speed setting is left untouched.
 
 ---
 

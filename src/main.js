@@ -125,7 +125,7 @@ ipcMain.on("bhop-keys", (_, events) => {
 // Bundle cache: memory + disk (keyed by URL filename, e.g. app.abc123.js)
 // P0-1: filename is version-suffixed so any patch change invalidates old
 // entries; stale entries are pruned at startup (see pruneBundleCache).
-const PATCH_VERSION = 1;
+const PATCH_VERSION = 2;
 const _bundleCache = new Map();
 const _cacheDir = () => path.join(app.getPath('userData'), 'bundle-cache');
 const _cacheKey = (url) => { try { return (new URL(url).pathname.split('/').pop() || url) + '.p' + PATCH_VERSION; } catch { return url + '.p' + PATCH_VERSION; } };
@@ -217,16 +217,6 @@ const PATCHES = [
     name: 'antiSpamClear',
     needle: "this['wNWmWwM']=!0x1",
     replacement: "window.__antiSpam=(this['wNWmWwM']=!0x1)",
-  },
-  {
-    name: 'bhopMult',
-    needle: "var iV='number'===typeof iT[d9Z(0x3bf2)]?iT[d9Z(0x3bf2)]:1.5",
-    replacement: "var iV='number'===typeof window.__dawnBhopMult?window.__dawnBhopMult:('number'===typeof iT[d9Z(0x3bf2)]?iT[d9Z(0x3bf2)]:1.5)",
-  },
-  {
-    name: 'bhopSlider',
-    needle: "'min':'1','max':'3','step':b1X(0x4dd8)",
-    replacement: "'min':'1','max':'5','step':b1X(0x4dd8)",
   },
 ];
 
