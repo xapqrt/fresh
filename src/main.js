@@ -110,7 +110,7 @@ ipcMain.handle("screenshot", async () => {
 ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   for (const { key, down } of events) {
-    const code = key.toUpperCase();
+    const code = key === ' ' ? 'SPACE' : key.toUpperCase();
     if (down) {
       if (_syntheticKeys.has(code)) continue;
       _syntheticKeys.set(code, Date.now());

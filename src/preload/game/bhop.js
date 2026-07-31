@@ -4,7 +4,7 @@ try { _ipc = require('electron').ipcRenderer; } catch (e) { }
 function installBhopHook(getSettings) {
   var _getSettings = getSettings || function () { return null; };
 
-  var _jumpKey = 'q';
+  var _jumpKey = ' ';
   var _toggleCode = 'Shift';
 
   var _shiftDown = false;
@@ -30,12 +30,18 @@ function installBhopHook(getSettings) {
     var s = _getSettings();
     if (!s) return;
     if (typeof s.bhop_jump === 'string' && s.bhop_jump) {
-      var c = s.bhop_jump;
-      if (c.length === 1) _jumpKey = c.toLowerCase();
-      else if (c.indexOf('Key') === 0) _jumpKey = c.slice(3).toLowerCase();
-      else _jumpKey = c.toLowerCase();
+      var c = s.bhop_jump.trim();
+      if (c === 'Space' || c === 'KeySpace' || c === 'space') {
+        _jumpKey = ' ';
+      } else if (c.length === 1) {
+        _jumpKey = c.toLowerCase();
+      } else if (c.indexOf('Key') === 0) {
+        _jumpKey = c.slice(3).toLowerCase();
+      } else {
+        _jumpKey = c.toLowerCase();
+      }
     } else {
-      _jumpKey = 'q';
+      _jumpKey = ' ';
     }
     if (typeof s.bhop_toggle === 'string' && s.bhop_toggle) {
       var t = s.bhop_toggle;
