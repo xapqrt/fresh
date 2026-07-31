@@ -13,8 +13,8 @@ function installBhopHook(getSettings) {
   var _strafeKey = null;
   var _strafePhysDown = false;
   var _lastToggle = 0;
-  var _holdMs = 6;
-  var _jitterMs = 0.5;
+  var _holdMs = 4;
+  var _jitterMs = 0.2;
   var _jitterAccum = 0;
   var _lastPulse = 0;
   var _pendingKeys = [];
