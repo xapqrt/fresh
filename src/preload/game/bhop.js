@@ -13,9 +13,10 @@ function installBhopHook(getSettings) {
   var _strafeKey = null;
   var _strafePhysDown = false;
   var _lastToggle = 0;
-  var _holdMs = 8;
-  var _jitterMs = 1;
+  var _holdMs = 6;
+  var _jitterMs = 0.5;
   var _jitterAccum = 0;
+  var _lastPulse = 0;
   var _pendingKeys = [];
   var _toggleCode = 'ShiftLeft';
   var _jumpCode = 'KeyQ';
@@ -48,10 +49,12 @@ function installBhopHook(getSettings) {
     return null;
   }
 
-  function _pulseStrafe() {
+  function _pulseStrafe(now) {
     if (!_strafeKey) return;
     var physicallyHeld = (_strafeKey === 'a' && _aDown) || (_strafeKey === 'd' && _dDown);
     if (physicallyHeld) { _strafePhysDown = true; return; }
+    if (now - _lastPulse < 25) return;
+    _lastPulse = now;
     _queueKey(_strafeKey, false);
     _queueKey(_strafeKey, true);
     _strafePhysDown = true;
@@ -66,43 +69,45 @@ function installBhopHook(getSettings) {
       _lastToggle = now - _holdMs - _jitterMs;
       if (_phase === 1) { _qDownPhys = false; _queueKey(_jumpChar, false); _phase = 2; }
       _qDownPhys = true; _queueKey(_jumpChar, true);
-      _pulseStrafe();
+      _pulseStrafe(now);
       _phase = 1;
       _jitterAccum = Math.random() * _jitterMs;
-      _flushKeys();
+      queueMicrotask(_flushKeys);
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (grounded === false) {
-      _flushKeys();
+      queueMicrotask(_flushKeys);
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (_lastToggle !== 0 && performance.now() - now > 3.6) {
-      _flushKeys();
+      queueMicrotask(_flushKeys);
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (now - _lastToggle < _holdMs + _jitterAccum) {
-      _flushKeys();
+      queueMicrotask(_flushKeys);
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
-    _lastToggle = now;
-    _jitterAccum = Math.random() * _jitterMs;
-
-    if (_phase === 1) {
-      _qDownPhys = false; _queueKey('q', false); _phase = 2;
-    } else if (_phase === 2) {
-      _qDownPhys = true; _queueKey('q', true);
-      _pulseStrafe();
-      _phase = 1;
+    var _n = 0;
+    while (now - _lastToggle >= _holdMs + _jitterAccum && _n++ < 8) {
+      _lastToggle += _holdMs + _jitterAccum;
+      _jitterAccum = Math.random() * _jitterMs;
+      if (_phase === 1) {
+        _qDownPhys = false; _queueKey(_jumpChar, false); _phase = 2;
+      } else {
+        _qDownPhys = true; _queueKey(_jumpChar, true);
+        _pulseStrafe(now);
+        _phase = 1;
+      }
     }
-    _flushKeys();
+    queueMicrotask(_flushKeys);
     _rAFId = requestAnimationFrame(_tick);
   }
 
