@@ -20,8 +20,17 @@ let _localSettings = _settings ? { ..._settings } : null;
 try {
   require('electron').ipcRenderer.on('settings-updated', (_event, s) => {
     _localSettings = s;
+    applyBhopMult(s);
   });
 } catch (e) {}
+
+function applyBhopMult(s) {
+  try {
+    const m = parseFloat(s && s.bhop_mult);
+    if (typeof m === 'number' && isFinite(m) && m >= 1) window.__dawnBhopMult = m;
+    else window.__dawnBhopMult = undefined;
+  } catch (e) {}
+}
 
 const createWeaponConfig = (s) => ({
   colorEnabled: s.weapon_color ?? false,
@@ -53,6 +62,7 @@ function updateWeaponConfig(s) {
 
 if (_settings) {
   updateWeaponConfig(_settings);
+  applyBhopMult(_settings);
 }
 
 function injectMenu() {

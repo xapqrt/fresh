@@ -49,6 +49,14 @@ function installBhopHook(getSettings) {
     return null;
   }
 
+  function _pollAntiSpam() {
+    try {
+      var v = window.__antiSpam;
+      if (typeof v === 'boolean') return v;
+    } catch (e) {}
+    return false;
+  }
+
   function _pulseStrafe(now) {
     if (!_strafeKey) return;
     var physicallyHeld = (_strafeKey === 'a' && _aDown) || (_strafeKey === 'd' && _dDown);
@@ -102,8 +110,10 @@ function installBhopHook(getSettings) {
       if (_phase === 1) {
         _qDownPhys = false; _queueKey(_jumpChar, false); _phase = 2;
       } else {
-        _qDownPhys = true; _queueKey(_jumpChar, true);
-        _pulseStrafe(now);
+        if (!_pollAntiSpam()) {
+          _qDownPhys = true; _queueKey(_jumpChar, true);
+          _pulseStrafe(now);
+        }
         _phase = 1;
       }
     }

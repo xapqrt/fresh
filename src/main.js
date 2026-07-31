@@ -123,9 +123,24 @@ ipcMain.on("bhop-keys", (_, events) => {
 });
 
 // Bundle cache: memory + disk (keyed by URL filename, e.g. app.abc123.js)
+// P0-1: filename is version-suffixed so any patch change invalidates old
+// entries; stale entries are pruned at startup (see pruneBundleCache).
+const PATCH_VERSION = 1;
 const _bundleCache = new Map();
 const _cacheDir = () => path.join(app.getPath('userData'), 'bundle-cache');
-const _cacheKey = (url) => { try { return new URL(url).pathname.split('/').pop() || url; } catch { return url; } };
+const _cacheKey = (url) => { try { return (new URL(url).pathname.split('/').pop() || url) + '.p' + PATCH_VERSION; } catch { return url + '.p' + PATCH_VERSION; } };
+const pruneBundleCache = () => {
+  try {
+    const d = _cacheDir();
+    if (!fs.existsSync(d)) return;
+    const keep = '.p' + PATCH_VERSION;
+    for (const f of fs.readdirSync(d)) {
+      if (!f.endsWith(keep)) {
+        try { fs.unlinkSync(path.join(d, f)); console.log('[dawn-patch] pruned stale bundle cache:', f); } catch (e) {}
+      }
+    }
+  } catch (e) {}
+};
 const _cacheGet = (key) => {
   if (_bundleCache.has(key)) return _bundleCache.get(key);
   try {
@@ -183,6 +198,75 @@ const initResourceSwapper = () => {
   return files;
 };
 
+// ── dawn-patch: registry of bundle patches ─────────────────────────────────
+// Each entry is a literal string needle → replacement. Needles are verified
+// unique in the current bundle (see bundle-research-report.md); a needle that
+// stops matching is reported in __patchMeta.missing instead of crashing.
+const PATCHES = [
+  {
+    name: 'onGround',
+    needle: "iP[da8(0x3d56)]=iP[da8(0x55bf)],iP[da8(0x55bf)]=this[da8(0x55bf)]",
+    replacement: "iP[da8(0x3d56)]=iP[da8(0x55bf)],iP[da8(0x55bf)]=window.__onGround=!!this[da8(0x55bf)]",
+  },
+  {
+    name: 'antiSpam',
+    needle: "this[bWR(0x6627)]=0x1",
+    replacement: "window.__antiSpam=(this[bWR(0x6627)]=0x1)",
+  },
+  {
+    name: 'antiSpamClear',
+    needle: "this['wNWmWwM']=!0x1",
+    replacement: "window.__antiSpam=(this['wNWmWwM']=!0x1)",
+  },
+  {
+    name: 'bhopMult',
+    needle: "var iV='number'===typeof iT[d9Z(0x3bf2)]?iT[d9Z(0x3bf2)]:1.5",
+    replacement: "var iV='number'===typeof window.__dawnBhopMult?window.__dawnBhopMult:('number'===typeof iT[d9Z(0x3bf2)]?iT[d9Z(0x3bf2)]:1.5)",
+  },
+  {
+    name: 'bhopSlider',
+    needle: "'min':'1','max':'3','step':b1X(0x4dd8)",
+    replacement: "'min':'1','max':'5','step':b1X(0x4dd8)",
+  },
+];
+
+const applyPatches = (code) => {
+  const meta = { version: PATCH_VERSION, applied: [], missing: [] };
+  for (const p of PATCHES) {
+    if (code.includes(p.needle)) {
+      code = code.replace(p.needle, p.replacement);
+      meta.applied.push(p.name);
+    } else {
+      meta.missing.push(p.name);
+    }
+  }
+  return { code, meta };
+};
+
+const patchAndCache = async (targetScriptUrl) => {
+  const t0 = Date.now();
+  let code = await fetchText(targetScriptUrl);
+  const { code: patched, meta } = applyPatches(code);
+  const finalCode = patched + `\n//# sourceURL=${targetScriptUrl}` + `\nwindow.__patchMeta = ${JSON.stringify(meta)};`;
+  _cacheSet(targetScriptUrl, finalCode);
+  console.log(`[dawn-patch] ${meta.applied.length ? 'patched' : 'passthrough'} ${new URL(targetScriptUrl).pathname.split('/').pop()} in ${Date.now() - t0}ms — applied:[${meta.applied.join(',') || '-'}] missing:[${meta.missing.join(',') || '-'}]`);
+  return finalCode;
+};
+
+const warmBundleCache = async () => {
+  try {
+    const base = settings.base_url || 'https://kirka.io/';
+    const html = await fetchText(base);
+    const m = html.match(/assets\/js\/(app\.\w+\.js)/);
+    if (!m) { console.warn('[dawn-patch] warm: app bundle URL not found in index page'); return; }
+    const url = new URL(m[1], 'https://kirka.io/').href;
+    if (_cacheGet(url)) { console.log('[dawn-patch] warm: already cached', m[1]); return; }
+    await patchAndCache(url);
+  } catch (err) {
+    console.warn('[dawn-patch] warm failed:', err.message);
+  }
+};
+
 const initPatchProtocol = () => {
   if (_patchProtocolRegistered) return;
   _patchProtocolRegistered = true;
@@ -208,30 +292,7 @@ const initPatchProtocol = () => {
       if (cached) return serve(cached);
 
       try {
-        let code = await fetchText(targetScriptUrl);
-        let patchMeta = { zoom: false, onGround: false };
-
-        const zoomTarget = "f5['a'][hF]";
-        if (code.includes(zoomTarget)) {
-          code = code.replace(zoomTarget, "(window.__f5=f5,window.__zoomInstance=this,f5['a'][hF])");
-          patchMeta.zoom = true;
-        } else {
-          console.warn('[dawn-patch] WARNING: zoom pattern not found — bundle format may have changed');
-        }
-
-        const onGroundRe = /this\['onGround'\]\s*=\s*([^;,]+)/;
-        if (onGroundRe.test(code)) {
-          code = code.replace(onGroundRe, "this['onGround']=$1,window.__onGround=$1");
-          patchMeta.onGround = true;
-        } else {
-          console.warn('[dawn-patch] WARNING: onGround pattern not found — bhop may be broken');
-        }
-
-        code += `\n//# sourceURL=${targetScriptUrl}`;
-        code += `\n// dawn-patch: zoom=${patchMeta.zoom} onGround=${patchMeta.onGround}`;
-
-        _cacheSet(targetScriptUrl, code);
-
+        const code = await patchAndCache(targetScriptUrl);
         return serve(code);
       } catch (err) {
         console.error('[dawn-patch] fetch failed for', targetScriptUrl, err);
@@ -393,7 +454,7 @@ const createWindow = () => {
   initPatchProtocol();
   const customFiles = initResourceSwapper();
 
-  const bundleFilter = { urls: ['*://kirka.io/assets/js/app.*.js'] };
+  const bundleFilter = { urls: ['*://kirka.io/assets/js/app.*.js', '*://kirka.io/assets/js/chunk-*.js'] };
   const customFilterUrls = Object.keys(customFiles).length
     ? Object.keys(customFiles).map(k => '*://*/*' + k)
     : [];
@@ -402,8 +463,9 @@ const createWindow = () => {
   session.defaultSession.webRequest.onBeforeRequest(
     { urls: allUrls },
     (details, callback) => {
-      if (/kirka\.io\/assets\/js\/app\.\w+\.js/.test(details.url)) {
-        return callback({ redirectURL: 'dawn-patch://bundle/app.js?url=' + encodeURIComponent(details.url) });
+      if (/kirka\.io\/assets\/js\/(app\.\w+\.js|chunk-[\w-]+\.js)/.test(details.url)) {
+        const fileName = new URL(details.url).pathname.split('/').pop();
+        return callback({ redirectURL: 'dawn-patch://bundle/' + fileName + '?url=' + encodeURIComponent(details.url) });
       }
 
       if (Object.keys(customFiles).length) {
@@ -471,6 +533,7 @@ const matchEnded = () => {
 };
 
 const initGame = () => {
+  pruneBundleCache();
   createSplashWindow();
   setTimeout(() => {
     createWindow();
@@ -484,6 +547,7 @@ const initGame = () => {
       });
     }
   }, 100);
+  setTimeout(() => { warmBundleCache(); }, 400);
 };
 
 app.on("ready", async () => {
