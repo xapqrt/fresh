@@ -260,13 +260,13 @@ window.dumpCookies = async () => {
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
-    installBhopHook();
+    installBhopHook(() => _localSettings);
     loadCustomCSS();
     weaponHook.hookWebGL();
     observerRouter.start();
   });
 } else {
-  installBhopHook();
+  installBhopHook(() => _localSettings);
   loadCustomCSS();
   weaponHook.hookWebGL();
   observerRouter.start();

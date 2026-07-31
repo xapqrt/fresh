@@ -38,11 +38,11 @@ function matchesKeybindMain(input, bind) {
 }
 
 // ── Synthetic key tracking ────────────────────────────────────────────────
-const _syntheticKeys = new Set();
+const _syntheticKeys = new Map(); // code -> timestamp held since
 
 function releaseSyntheticKeys() {
   if (!gameWindow || gameWindow.isDestroyed()) return;
-  for (const key of _syntheticKeys) {
+  for (const key of _syntheticKeys.keys()) {
     try {
       gameWindow.webContents.sendInputEvent({
         type: "keyUp",
@@ -52,6 +52,19 @@ function releaseSyntheticKeys() {
   }
   _syntheticKeys.clear();
 }
+
+// Watchdog: if any synthetic key is held >1.5s (missed keyUp from blur/Escape/
+// navigation), force-release it so bhop never silently degrades.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, ts] of _syntheticKeys) {
+    if (now - ts > 1500) {
+      console.warn("[bhop] watchdog: releasing stuck synthetic key", key);
+      releaseSyntheticKeys();
+      return;
+    }
+  }
+}, 1000);
 
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
@@ -100,7 +113,7 @@ ipcMain.on("bhop-keys", (_, events) => {
     const code = key.toUpperCase();
     if (down) {
       if (_syntheticKeys.has(code)) continue;
-      _syntheticKeys.add(code);
+      _syntheticKeys.set(code, Date.now());
     } else {
       if (!_syntheticKeys.has(code)) continue;
       _syntheticKeys.delete(code);
@@ -211,7 +224,7 @@ const initPatchProtocol = () => {
 
         const onGroundRe = /this\['onGround'\]\s*=\s*([^;,]+)/;
         if (onGroundRe.test(code)) {
-          code = code.replace(onGroundRe, "this['onGround']=$1,window.__onGround=$1");
+          code = code.replace(onGroundRe, "this['onGround']=$1,window.__onGround=$1,window.__onGroundTick&&window.__onGroundTick($1)");
           patchMeta.onGround = true;
         } else {
           console.warn('[dawn-patch] WARNING: onGround pattern not found — bhop may be broken');
@@ -366,6 +379,9 @@ const createWindow = () => {
 
   gameWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && !input.repeat) {
+      if (input.code === 'Escape') {
+        releaseSyntheticKeys();
+      }
       const bind = settings.menu_keybind || 'ShiftRight';
       if (matchesKeybindMain(input, bind)) {
         event.preventDefault();
