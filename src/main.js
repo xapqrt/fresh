@@ -39,6 +39,7 @@ function matchesKeybindMain(input, bind) {
 
 // ── Synthetic key tracking ────────────────────────────────────────────────
 const _syntheticKeys = new Set();
+let _lastBhopFlush = 0;
 
 function releaseSyntheticKeys() {
   if (!gameWindow || gameWindow.isDestroyed()) return;
@@ -52,6 +53,14 @@ function releaseSyntheticKeys() {
   }
   _syntheticKeys.clear();
 }
+
+setInterval(() => {
+  if (_syntheticKeys.size === 0) { _lastBhopFlush = 0; return; }
+  if (_lastBhopFlush !== 0 && Date.now() - _lastBhopFlush > 1500) {
+    releaseSyntheticKeys();
+    _lastBhopFlush = 0;
+  }
+}, 500);
 
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
@@ -96,8 +105,9 @@ ipcMain.handle("screenshot", async () => {
 
 ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
+  _lastBhopFlush = Date.now();
   for (const { key, down } of events) {
-    const code = key.toUpperCase();
+    const code = key === ' ' ? 'SPACE' : key.toUpperCase();
     if (down) {
       if (_syntheticKeys.has(code)) continue;
       _syntheticKeys.add(code);

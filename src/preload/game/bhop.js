@@ -1,7 +1,7 @@
 var _ipc = null;
 try { _ipc = require('electron').ipcRenderer; } catch (e) { }
 
-function installBhopHook() {
+function installBhopHook(getSettings) {
   var _shiftDown = false;
   var _qDown = false;
   var _aDown = false;
@@ -17,6 +17,18 @@ function installBhopHook() {
   var _jitterMs = 1;
   var _jitterAccum = 0;
   var _pendingKeys = [];
+  var _toggleCode = 'ShiftLeft';
+  var _jumpCode = 'KeyQ';
+  var _jumpChar = 'q';
+
+  function _readKeys() {
+    var s = typeof getSettings === 'function' ? getSettings() : null;
+    var toggle = (s && s.bhop_toggle) || 'Shift';
+    var jump = (s && s.bhop_jump) || 'KeyQ';
+    _toggleCode = toggle === 'Control' ? 'ControlLeft' : (toggle === 'Alt' ? 'AltLeft' : 'ShiftLeft');
+    _jumpCode = jump;
+    _jumpChar = jump === 'Space' ? ' ' : (jump === 'KeyW' ? 'w' : 'q');
+  }
 
   function _queueKey(key, down) {
     _pendingKeys.push({ key, down });
@@ -52,8 +64,8 @@ function installBhopHook() {
 
     if (grounded === true) {
       _lastToggle = now - _holdMs - _jitterMs;
-      if (_phase === 1) { _qDownPhys = false; _queueKey('q', false); _phase = 2; }
-      _qDownPhys = true; _queueKey('q', true);
+      if (_phase === 1) { _qDownPhys = false; _queueKey(_jumpChar, false); _phase = 2; }
+      _qDownPhys = true; _queueKey(_jumpChar, true);
       _pulseStrafe();
       _phase = 1;
       _jitterAccum = Math.random() * _jitterMs;
@@ -99,7 +111,7 @@ function installBhopHook() {
     _bhopOn = true;
     _strafeKey = _aDown ? 'a' : (_dDown ? 'd' : null);
     _strafePhysDown = false;
-    _phase = 1; _qDownPhys = true; _queueKey('q', true);
+    _phase = 1; _qDownPhys = true; _queueKey(_jumpChar, true);
     _lastToggle = performance.now();
     _flushKeys();
     _rAFId = requestAnimationFrame(_tick);
@@ -109,7 +121,7 @@ function installBhopHook() {
     if (!_bhopOn) return;
     _bhopOn = false;
     if (_rAFId !== null) { cancelAnimationFrame(_rAFId); _rAFId = null; }
-    if (_qDownPhys) { _qDownPhys = false; _queueKey('q', false); }
+    if (_qDownPhys) { _qDownPhys = false; _queueKey(_jumpChar, false); }
     if (_strafePhysDown && _strafeKey) {
       var physicallyHeld = (_strafeKey === 'a' && _aDown) || (_strafeKey === 'd' && _dDown);
       if (!physicallyHeld) _queueKey(_strafeKey, false);
@@ -127,8 +139,9 @@ function installBhopHook() {
     var k = e.key;
     if (k === "Escape") { _reset(); return; }
     if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) return;
-    if (e.code === "ShiftLeft") { _shiftDown = true; _start(); }
-    else if (k === "q" || k === "Q") { _qDown = true; _start(); }
+    _readKeys();
+    if (e.code === _toggleCode) { _shiftDown = true; _start(); }
+    else if (e.code === _jumpCode) { _qDown = true; _start(); }
     else if (k === "a" || k === "A") { _aDown = true; if (_bhopOn) _strafeKey = 'a'; }
     else if (k === "d" || k === "D") { _dDown = true; if (_bhopOn) _strafeKey = 'd'; }
   }, true);
@@ -137,8 +150,9 @@ function installBhopHook() {
     if (!e.isTrusted) return;
     var k = e.key;
     if (k === "Escape") return;
-    if (e.code === "ShiftLeft") { _shiftDown = false; if (!_shiftDown && !_qDown) _stop(); }
-    else if (k === "q" || k === "Q") { _qDown = false; if (!_shiftDown && !_qDown) _stop(); }
+    _readKeys();
+    if (e.code === _toggleCode) { _shiftDown = false; if (!_shiftDown && !_qDown) _stop(); }
+    else if (e.code === _jumpCode) { _qDown = false; if (!_shiftDown && !_qDown) _stop(); }
     else if (k === "a" || k === "A") {
       _aDown = false;
       if (_bhopOn && _strafeKey === 'a') { _strafeKey = _dDown ? 'd' : null; }
