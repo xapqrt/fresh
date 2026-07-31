@@ -3,7 +3,6 @@ try { _ipc = require('electron').ipcRenderer; } catch (e) { }
 
 function installBhopHook(getSettings) {
   var _shiftDown = false;
-  var _qDown = false;
   var _aDown = false;
   var _dDown = false;
   var _bhopOn = false;
@@ -19,16 +18,24 @@ function installBhopHook(getSettings) {
   var _lastPulse = 0;
   var _pendingKeys = [];
   var _toggleCode = 'ShiftLeft';
-  var _jumpCode = 'KeyQ';
   var _jumpChar = 'q';
+  var _wasAirborne = true;
+  var _lastPress = 0;
+  var _retryGroundedMs = 90;
 
   function _readKeys() {
     var s = typeof getSettings === 'function' ? getSettings() : null;
     var toggle = (s && s.bhop_toggle) || 'Shift';
     var jump = (s && s.bhop_jump) || 'KeyQ';
     _toggleCode = toggle === 'Control' ? 'ControlLeft' : (toggle === 'Alt' ? 'AltLeft' : 'ShiftLeft');
-    _jumpCode = jump === 'KeyW' ? 'KeyW' : 'KeyQ';
     _jumpChar = jump === 'KeyW' ? 'w' : 'q';
+  }
+
+  function _enabled() {
+    try {
+      var s = typeof getSettings === 'function' ? getSettings() : null;
+      return !(s && s.bhop_enabled === false);
+    } catch (e) { return true; }
   }
 
   function _queueKey(key, down) {
@@ -57,6 +64,13 @@ function installBhopHook(getSettings) {
     return false;
   }
 
+  function _sendJump(down) {
+    if (down === _qDownPhys) return;
+    _qDownPhys = down;
+    _queueKey(_jumpChar, down);
+    if (down) _lastPress = performance.now();
+  }
+
   function _pulseStrafe(now) {
     if (!_strafeKey) return;
     var physicallyHeld = (_strafeKey === 'a' && _aDown) || (_strafeKey === 'd' && _dDown);
@@ -74,29 +88,37 @@ function installBhopHook(getSettings) {
     var grounded = _pollGround();
 
     if (grounded === true) {
-      _lastToggle = now - _holdMs - _jitterMs;
-      if (_phase === 1) { _qDownPhys = false; _queueKey(_jumpChar, false); _phase = 2; }
-      _qDownPhys = true; _queueKey(_jumpChar, true);
+      // Jump only while grounded: one press per landing. Pressing mid-air fills
+      // the game's jump buffer, which then fires phantom hops after release.
+      // If the game's anti-spam counter is still hot (very short hop), defer a
+      // frame instead of letting the press get eaten.
+      if ((_wasAirborne || now - _lastPress >= _retryGroundedMs) && !_pollAntiSpam()) {
+        if (_phase === 1) { _sendJump(false); _phase = 2; }
+        _sendJump(true);
+        _lastToggle = now;
+        _jitterAccum = Math.random() * _jitterMs;
+        _phase = 1;
+        _wasAirborne = false;
+      } else if (_phase === 1 && now - _lastToggle >= _holdMs + _jitterAccum) {
+        _sendJump(false);
+        _phase = 2;
+      }
       _pulseStrafe(now);
-      _phase = 1;
-      _jitterAccum = Math.random() * _jitterMs;
       queueMicrotask(_flushKeys);
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
     if (grounded === false) {
+      // In flight: finish the hold, wait for the next landing.
+      if (_phase === 1) { _sendJump(false); _phase = 2; }
+      _wasAirborne = true;
       queueMicrotask(_flushKeys);
       _rAFId = requestAnimationFrame(_tick);
       return;
     }
 
-    if (_lastToggle !== 0 && performance.now() - now > 3.6) {
-      queueMicrotask(_flushKeys);
-      _rAFId = requestAnimationFrame(_tick);
-      return;
-    }
-
+    // ── Blind fallback (no __onGround hook): timed cadence ──
     if (now - _lastToggle < _holdMs + _jitterAccum) {
       queueMicrotask(_flushKeys);
       _rAFId = requestAnimationFrame(_tick);
@@ -108,12 +130,10 @@ function installBhopHook(getSettings) {
       _lastToggle += _holdMs + _jitterAccum;
       _jitterAccum = Math.random() * _jitterMs;
       if (_phase === 1) {
-        _qDownPhys = false; _queueKey(_jumpChar, false); _phase = 2;
+        _sendJump(false); _phase = 2;
       } else {
-        if (!_pollAntiSpam()) {
-          _qDownPhys = true; _queueKey(_jumpChar, true);
-          _pulseStrafe(now);
-        }
+        if (!_pollAntiSpam()) _sendJump(true);
+        _pulseStrafe(now);
         _phase = 1;
       }
     }
@@ -122,13 +142,16 @@ function installBhopHook(getSettings) {
   }
 
   function _start() {
-    if (_bhopOn) return;
+    if (_bhopOn || !_enabled()) return;
     _bhopOn = true;
     _strafeKey = _aDown ? 'a' : (_dDown ? 'd' : null);
     _strafePhysDown = false;
-    _phase = 1; _qDownPhys = true; _queueKey(_jumpChar, true);
+    _qDownPhys = false;
+    _phase = 0;
+    _wasAirborne = true;
+    _lastPress = 0;
     _lastToggle = performance.now();
-    _flushKeys();
+    _jitterAccum = Math.random() * _jitterMs;
     _rAFId = requestAnimationFrame(_tick);
   }
 
@@ -147,7 +170,7 @@ function installBhopHook(getSettings) {
     _phase = 0;
   }
 
-  function _reset() { _shiftDown = false; _qDown = false; _aDown = false; _dDown = false; _strafeKey = null; _stop(); }
+  function _reset() { _shiftDown = false; _aDown = false; _dDown = false; _strafeKey = null; _stop(); }
 
   window.addEventListener("keydown", function (e) {
     if (!e.isTrusted || e.repeat) return;
@@ -156,7 +179,6 @@ function installBhopHook(getSettings) {
     if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) return;
     _readKeys();
     if (e.code === _toggleCode) { _shiftDown = true; _start(); }
-    else if (e.code === _jumpCode) { _qDown = true; _start(); }
     else if (k === "a" || k === "A") { _aDown = true; if (_bhopOn) _strafeKey = 'a'; }
     else if (k === "d" || k === "D") { _dDown = true; if (_bhopOn) _strafeKey = 'd'; }
   }, true);
@@ -166,8 +188,7 @@ function installBhopHook(getSettings) {
     var k = e.key;
     if (k === "Escape") return;
     _readKeys();
-    if (e.code === _toggleCode) { _shiftDown = false; if (!_shiftDown && !_qDown) _stop(); }
-    else if (e.code === _jumpCode) { _qDown = false; if (!_shiftDown && !_qDown) _stop(); }
+    if (e.code === _toggleCode) { _shiftDown = false; _stop(); }
     else if (k === "a" || k === "A") {
       _aDown = false;
       if (_bhopOn && _strafeKey === 'a') { _strafeKey = _dDown ? 'd' : null; }
