@@ -107,7 +107,7 @@ ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   _lastBhopFlush = Date.now();
   for (const { key, down } of events) {
-    const code = key === ' ' ? 'SPACE' : key.toUpperCase();
+    const code = key.toUpperCase();
     if (down) {
       if (_syntheticKeys.has(code)) continue;
       _syntheticKeys.add(code);

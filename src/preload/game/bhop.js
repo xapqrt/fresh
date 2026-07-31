@@ -26,8 +26,8 @@ function installBhopHook(getSettings) {
     var toggle = (s && s.bhop_toggle) || 'Shift';
     var jump = (s && s.bhop_jump) || 'KeyQ';
     _toggleCode = toggle === 'Control' ? 'ControlLeft' : (toggle === 'Alt' ? 'AltLeft' : 'ShiftLeft');
-    _jumpCode = jump;
-    _jumpChar = jump === 'Space' ? ' ' : (jump === 'KeyW' ? 'w' : 'q');
+    _jumpCode = jump === 'KeyW' ? 'KeyW' : 'KeyQ';
+    _jumpChar = jump === 'KeyW' ? 'w' : 'q';
   }
 
   function _queueKey(key, down) {
