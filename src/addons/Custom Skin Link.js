@@ -327,6 +327,7 @@ function startfunction() {
     }
     d_csl_enabled.addEventListener("change", function (event) {
       localStorage.csl_enabled = d_csl_enabled.checked;
+      _syncCslPatch();
       if (localStorage.csl_enabled == "true") {
         fixLocalStorage();
       }
@@ -469,7 +470,10 @@ const oldIsArr = Array.isArray;
 const muzzleImg = "https://kirka.io/assets/img/__shooting-fire__.effa20af.png";
 const muzzleImg2 = "shooting-fire";
 
-let patchedTextures = new Map();
+// WeakMap so patched textures don't accumulate forever — the game creates new
+// texture objects every match, and a strong Map used to retain them all,
+// causing unbounded renderer memory growth (progressive slowdown).
+const _patchMeta = new WeakMap();
 
 function getCurrentSkinUrl() {
   if (localStorage.csl_enabled !== "true") return null;
@@ -478,7 +482,42 @@ function getCurrentSkinUrl() {
     : localStorage.csl_url) || default_url;
 }
 
-Array.isArray = function(arg) {
+let _lastIngameCheck = 0;
+let _ingameCached = false;
+const _isIngame = () => {
+  // Cache the TRUE value briefly (in-match = hot path). A stale FALSE would
+  // make freshly-spawned players/bots miss the patch at match start, so the
+  // false->true flip is always re-checked fresh.
+  if (_ingameCached) {
+    if (performance.now() - _lastIngameCheck < 500) return true;
+    _ingameCached = false;
+  }
+  _ingameCached = !!document.querySelector(".desktop-game-interface");
+  _lastIngameCheck = performance.now();
+  return _ingameCached;
+};
+
+// The game can upload the texture's current (still original) bitmap to the GPU
+// before the custom image finishes loading — that's why skins show up
+// "sometimes". Force a re-upload once the new source actually decodes.
+const _pendingReuploads = new WeakSet();
+const _forceReuploadAfterLoad = (image, texture) => {
+  if (image.complete || _pendingReuploads.has(image)) return;
+  _pendingReuploads.add(image);
+  const onLoad = () => {
+    _pendingReuploads.delete(image);
+    image.removeEventListener("load", onLoad);
+    texture.needsUpdate = true;
+  };
+  image.addEventListener("load", onLoad);
+};
+
+// The wrapper replaces the global Array.isArray, which the game (three.js) calls
+// constantly for materials/attributes/buffers. Leaving it installed while the
+// feature is disabled adds a JS call + property lookups to every invocation for
+// zero benefit — so install it only while csl_enabled is true.
+let _cslPatchInstalled = false;
+const _cslIsArrayWrapper = function(arg) {
   if (!arg || !arg.map || !arg.map.image) return oldIsArr.call(Array, arg);
 
   const image = arg.map.image;
@@ -488,21 +527,51 @@ Array.isArray = function(arg) {
   if (h !== 64 && h !== 42 && h !== 32) return oldIsArr.call(Array, arg);
   if (image.src === muzzleImg || image.src.includes(muzzleImg2)) return oldIsArr.call(Array, arg);
 
+  // No custom skin configured — bail before doing any DOM work.
   const customSkinLink = getCurrentSkinUrl();
-  const ingame = !!document.querySelector(".desktop-game-interface");
+  if (!customSkinLink) return oldIsArr.call(Array, arg);
+
   const ingameOnly = localStorage.csl_ingame_only !== "false";
-  const canSwap = ingameOnly ? ingame : true;
+  const canSwap = ingameOnly ? _isIngame() : true;
 
   const texture = arg.map;
-  if (canSwap && customSkinLink && !patchedTextures.has(texture)) {
-    patchedTextures.set(texture, image.src);
-    image.src = customSkinLink;
+  // Bookkeeping keyed on the IMAGE (survives texture object reuse), and
+  // re-patching is throttled — re-applying the skin on every frame the game
+  // touches a texture source used to churn image loads + GPU uploads.
+  const meta = _patchMeta.get(image);
+
+  if (canSwap) {
+    if (!meta) {
+      _patchMeta.set(image, { originalSrc: image.src, lastPatchAt: performance.now() });
+      image.src = customSkinLink;
+      texture.needsUpdate = true;
+      _forceReuploadAfterLoad(image, texture);
+    } else if (image.src !== customSkinLink && performance.now() - meta.lastPatchAt > 250) {
+      // The game reset the source (new match / respawn) — re-apply, throttled.
+      meta.lastPatchAt = performance.now();
+      image.src = customSkinLink;
+      texture.needsUpdate = true;
+      _forceReuploadAfterLoad(image, texture);
+    }
+  } else if (meta && image.src === customSkinLink) {
+    image.src = meta.originalSrc;
     texture.needsUpdate = true;
-  } else if (!canSwap && patchedTextures.has(texture)) {
-    image.src = patchedTextures.get(texture);
-    patchedTextures.delete(texture);
-    texture.needsUpdate = true;
+    _forceReuploadAfterLoad(image, texture);
+    _patchMeta.delete(image);
   }
 
   return oldIsArr.call(Array, arg);
-}
+};
+
+const _syncCslPatch = () => {
+  const enabled = localStorage.csl_enabled === "true";
+  if (enabled === _cslPatchInstalled) return;
+  _cslPatchInstalled = enabled;
+  Array.isArray = enabled ? _cslIsArrayWrapper : oldIsArr;
+};
+
+// Install/uninstall only while enabled — zero Array.isArray overhead for users
+// who never touch this feature. Note: uninstalling mid-session does NOT roll
+// back textures already swapped (WeakMap isn't iterable) — they reset when the
+// game regenerates textures next match, which is exactly the leak-free path.
+try { _syncCslPatch(); } catch (e) { Array.isArray = oldIsArr; }

@@ -20,7 +20,7 @@ ELECTRON_BIN=$(npx which electron 2>/dev/null || echo "./node_modules/.bin/elect
 # Verify electron exists
 if [ ! -x "$ELECTRON_BIN" ]; then
   echo "Electron binary not found at $ELECTRON_BIN. Attempting fresh install..."
-  npm install electron@32.4.0 --save-dev
+  npm install electron@32.2.0 --save-dev
   ELECTRON_BIN="./node_modules/.bin/electron"
 fi
 

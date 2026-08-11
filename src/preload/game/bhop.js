@@ -22,6 +22,7 @@ function installBhopHook(getSettings) {
   var _wasAirborne = true;
   var _lastPress = 0;
   var _retryGroundedMs = 90;
+  var _ctrlDown = false;
 
   function _readKeys() {
     var s = typeof getSettings === 'function' ? getSettings() : null;
@@ -170,7 +171,7 @@ function installBhopHook(getSettings) {
     _phase = 0;
   }
 
-  function _reset() { _shiftDown = false; _aDown = false; _dDown = false; _strafeKey = null; _stop(); }
+  function _reset() { _shiftDown = false; _ctrlDown = false; _aDown = false; _dDown = false; _strafeKey = null; _stop(); }
 
   window.addEventListener("keydown", function (e) {
     if (!e.isTrusted || e.repeat) return;
@@ -178,7 +179,14 @@ function installBhopHook(getSettings) {
     if (k === "Escape") { _reset(); return; }
     if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable)) return;
     _readKeys();
-    if (e.code === _toggleCode) { _shiftDown = true; _start(); }
+    if (e.code === "ControlLeft" && _toggleCode !== "ControlLeft") {
+      _ctrlDown = true;
+      _queueKey("ShiftLeft", true);
+      queueMicrotask(_flushKeys);
+    }
+    else if (e.code === _toggleCode) {
+      if (_ctrlDown) { _shiftDown = false; } else { _shiftDown = true; _start(); }
+    }
     else if (k === "a" || k === "A") { _aDown = true; if (_bhopOn) _strafeKey = 'a'; }
     else if (k === "d" || k === "D") { _dDown = true; if (_bhopOn) _strafeKey = 'd'; }
   }, true);
@@ -188,7 +196,12 @@ function installBhopHook(getSettings) {
     var k = e.key;
     if (k === "Escape") return;
     _readKeys();
-    if (e.code === _toggleCode) { _shiftDown = false; _stop(); }
+    if (e.code === "ControlLeft" && _toggleCode !== "ControlLeft") {
+      _ctrlDown = false;
+      _queueKey("ShiftLeft", false);
+      queueMicrotask(_flushKeys);
+    }
+    else if (e.code === _toggleCode) { _shiftDown = false; _stop(); }
     else if (k === "a" || k === "A") {
       _aDown = false;
       if (_bhopOn && _strafeKey === 'a') { _strafeKey = _dDown ? 'd' : null; }

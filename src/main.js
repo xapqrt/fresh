@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, protocol, ipcMain, nativeTheme, shell, globalShortcut } = require("electron");
+const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut } = require("electron");
 const { applySwitches } = require("./util/switches");
 const { default_settings, allowed_urls } = require("./util/defaults.json");
 const path = require("path");
@@ -29,6 +29,20 @@ let gameWindow = null;
 let splashWindow = null;
 const getGameWindow = () => gameWindow;
 
+// One instance per launch — two clients writing to the same bundle cache /
+// settings would fight each other.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const gw = getGameWindow();
+    if (gw && !gw.isDestroyed()) {
+      if (gw.isMinimized()) gw.restore();
+      gw.focus();
+    }
+  });
+}
+
 function matchesKeybindMain(input, bind) {
   if (!bind) return false;
   if (bind === 'Shift') return input.code === 'ShiftLeft' || input.code === 'ShiftRight';
@@ -36,6 +50,8 @@ function matchesKeybindMain(input, bind) {
   if (bind === 'LeftShift' || bind === 'ShiftLeft') return input.code === 'ShiftLeft';
   return input.code === bind || input.key === bind;
 }
+
+let _failLoadAttempt = 0;
 
 // ── Synthetic key tracking ────────────────────────────────────────────────
 const _syntheticKeys = new Set();
@@ -64,20 +80,16 @@ setInterval(() => {
 
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
-ipcMain.handle("get-settings", async () => settings);
 ipcMain.on("update-setting", (e, key, value) => {
   settings[key] = value;
   store.set("settings", settings);
+  if (key === "fps_cap" && gameWindow && !gameWindow.isDestroyed()) {
+    applyFrameCap(gameWindow, value);
+  }
   if (gameWindow && !gameWindow.isDestroyed()) {
     gameWindow.webContents.send("settings-updated", settings);
   }
 });
-ipcMain.handle("fs-exists", async (_, p) => { try { return fs.existsSync(p); } catch { return false; } });
-ipcMain.handle("fs-read-file", async (_, p, enc) => { try { return fs.readFileSync(p, enc || "utf-8"); } catch { return null; } });
-ipcMain.handle("fs-write-file", async (_, p, content) => { try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, content, "utf-8"); return true; } catch { return false; } });
-ipcMain.handle("fs-readdir", async (_, p) => { try { return fs.readdirSync(p); } catch { return []; } });
-ipcMain.handle("fs-mkdir", async (_, p) => { try { fs.mkdirSync(p, { recursive: true }); return true; } catch { return false; } });
-ipcMain.handle("get-documents-path", async () => app.getPath("documents"));
 ipcMain.handle("dump-cookies", async () => {
   const domains = ['https://kirka.io', 'https://api2.kirka.io', 'https://login.xsolla.com', 'https://accounts.google.com'];
   const result = {};
@@ -89,25 +101,11 @@ ipcMain.handle("dump-cookies", async () => {
   }
   return result;
 });
-ipcMain.handle("clipboard-write", async (_, text) => { try { require("electron").clipboard.writeText(text); } catch {} });
-ipcMain.handle("clipboard-read", async () => { try { return require("electron").clipboard.readText(); } catch { return ""; } });
-ipcMain.on("open-external", (_, url) => { try { shell.openExternal(url); } catch {} });
-ipcMain.on("navigate", (_, url) => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.loadURL(url); });
-ipcMain.on("navigate-home", () => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.loadURL(settings.base_url); });
-ipcMain.on("toggle-fullscreen", () => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.setFullScreen(!gameWindow.isFullScreen()); });
-ipcMain.on("toggle-devtools", () => { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.webContents.toggleDevTools(); });
-ipcMain.handle("screenshot", async () => {
-  if (gameWindow && !gameWindow.isDestroyed()) {
-    return (await gameWindow.webContents.capturePage()).toPNG();
-  }
-  return null;
-});
-
 ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   _lastBhopFlush = Date.now();
   for (const { key, down } of events) {
-    const code = key.toUpperCase();
+    const code = key.length === 1 ? key.toUpperCase() : key;
     if (down) {
       if (_syntheticKeys.has(code)) continue;
       _syntheticKeys.add(code);
@@ -151,7 +149,16 @@ const _cacheGet = (key) => {
 };
 const _cacheSet = (key, data) => {
   _bundleCache.set(key, data);
-  try { const d = _cacheDir(); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, _cacheKey(key)), data, 'utf-8'); } catch (e) {}
+  try {
+    const d = _cacheDir();
+    fs.mkdirSync(d, { recursive: true });
+    const f = path.join(d, _cacheKey(key));
+    // Atomic: write tmp then rename, so a crash mid-write can never leave a
+    // truncated bundle that gets served to the game on the next launch.
+    fs.writeFile(f + '.tmp', data, 'utf-8', () => {
+      try { fs.rename(f + '.tmp', f); } catch (e) {}
+    });
+  } catch (e) {}
 };
 let _patchProtocolRegistered = false;
 
@@ -159,7 +166,7 @@ const PRELOAD_PATH = path.join(__dirname, "preload", "game.js");
 const SPLASH_PRELOAD = path.join(__dirname, "preload", "splash.js");
 
 function fetchText(url) {
-  return fetch(url).then(r => {
+  return fetch(url, { signal: AbortSignal.timeout(15000) }).then(r => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.text();
   });
@@ -167,7 +174,19 @@ function fetchText(url) {
 
 const initResourceSwapper = () => {
   const customDir = path.join(app.getPath("userData"), "custom");
-  const files = {};
+  // normKey -> absolute file path. NormKey is the file's base/hash name with
+  // underscores stripped, because the game requests sounds like
+  // "___hit___.200043fa.mp3" while the source files are "__hit__.200043fa.mp3".
+  const normMap = {};
+
+  const registerFile = (full) => {
+    const base = path.basename(full);
+    if (!/\.(mp3|png|jpg|jpeg|webp|webm|ogg|wav|css|js|txt|json|svg)$/i.test(base)) return;
+    // normalize: strip underscores from the name segment so any underscore
+    // count matches; also drop any stray doubled extensions (use.X.mp3.mp3)
+    const clean = base.replace(/\.mp3\.mp3$/i, ".mp3").replace(/_/g, "").toLowerCase();
+    normMap[clean] = full;
+  };
 
   if (require("fs").existsSync(customDir)) {
     const walk = (dir) => {
@@ -175,27 +194,25 @@ const initResourceSwapper = () => {
         const full = path.join(dir, file);
         const stat = require("fs").statSync(full);
         if (stat.isDirectory()) walk(full);
-        else {
-          const rel = full.replace(customDir + path.sep, "").replace(/\\/g, "/");
-          files[rel] = full;
-        }
+        else registerFile(full);
       }
     };
     walk(customDir);
   }
 
-  if (Object.keys(files).length) {
-    protocol.handle("dawnclient", (request) => {
-      const urlPath = new URL(request.url).pathname.replace(/^\//, '');
-      const file = files[urlPath];
-      if (file && require("fs").existsSync(file)) {
-        return new Response(require("fs").createReadStream(file));
+  // dawnclient://<absolute-file-path> → serve that file straight from disk.
+  protocol.handle("dawnclient", (request) => {
+    try {
+      const filePath = decodeURIComponent(request.url.replace(/^dawnclient:\/\//, ""));
+      const fs = require("fs");
+      if (filePath && fs.existsSync(filePath)) {
+        return new Response(fs.readFileSync(filePath));
       }
-      return new Response("Not found", { status: 404 });
-    });
-  }
+    } catch (e) {}
+    return new Response("Not found", { status: 404 });
+  });
 
-  return files;
+  return normMap;
 };
 
 // ── dawn-patch: registry of bundle patches ─────────────────────────────────
@@ -233,27 +250,46 @@ const applyPatches = (code) => {
   return { code, meta };
 };
 
+// In-flight dedupe: the warm-up and the game's own request can race for the
+// same 6.5MB bundle on a cold cache — share one fetch/patch instead of doing
+// two concurrent downloads and two identical disk writes.
+const _inflightFetches = new Map();
 const patchAndCache = async (targetScriptUrl) => {
-  const t0 = Date.now();
-  let code = await fetchText(targetScriptUrl);
-  const { code: patched, meta } = applyPatches(code);
-  const finalCode = patched + `\n//# sourceURL=${targetScriptUrl}` + `\nwindow.__patchMeta = ${JSON.stringify(meta)};`;
-  _cacheSet(targetScriptUrl, finalCode);
-  console.log(`[dawn-patch] ${meta.applied.length ? 'patched' : 'passthrough'} ${new URL(targetScriptUrl).pathname.split('/').pop()} in ${Date.now() - t0}ms — applied:[${meta.applied.join(',') || '-'}] missing:[${meta.missing.join(',') || '-'}]`);
-  return finalCode;
+  const existing = _inflightFetches.get(targetScriptUrl);
+  if (existing) return existing;
+  const p = (async () => {
+    const t0 = Date.now();
+    let code = await fetchText(targetScriptUrl);
+    const { code: patched, meta } = applyPatches(code);
+    const finalCode = patched + `\n//# sourceURL=${targetScriptUrl}` + `\nwindow.__patchMeta = ${JSON.stringify(meta)};`;
+    _cacheSet(targetScriptUrl, finalCode);
+    console.log(`[dawn-patch] ${meta.applied.length ? 'patched' : 'passthrough'} ${new URL(targetScriptUrl).pathname.split('/').pop()} in ${Date.now() - t0}ms — applied:[${meta.applied.join(',') || '-'}] missing:[${meta.missing.join(',') || '-'}]`);
+    return finalCode;
+  })();
+  _inflightFetches.set(targetScriptUrl, p);
+  try {
+    return await p;
+  } finally {
+    _inflightFetches.delete(targetScriptUrl);
+  }
 };
 
+// Warm the bundle cache during splash so the game window's first script
+// request usually hits the cache. This runs in PARALLEL with window creation
+// (never gates it) — a slow fetch must not delay startup.
 const warmBundleCache = async () => {
   try {
     const base = settings.base_url || 'https://kirka.io/';
     const html = await fetchText(base);
     const m = html.match(/assets\/js\/(app\.\w+\.js)/);
-    if (!m) { console.warn('[dawn-patch] warm: app bundle URL not found in index page'); return; }
+    if (!m) { console.warn('[dawn-patch] warm: app bundle URL not found in index page'); return false; }
     const url = new URL(m[1], 'https://kirka.io/').href;
-    if (_cacheGet(url)) { console.log('[dawn-patch] warm: already cached', m[1]); return; }
+    if (_cacheGet(url)) { console.log('[dawn-patch] warm: already cached', m[1]); return true; }
     await patchAndCache(url);
+    return true;
   } catch (err) {
     console.warn('[dawn-patch] warm failed:', err.message);
+    return false;
   }
 };
 
@@ -321,6 +357,15 @@ const createSplashWindow = () => {
   splashWindow.on("closed", () => { splashWindow = null; });
 };
 
+// fps_cap setting → live frame-rate limit on the game contents.
+const applyFrameCap = (win, fps) => {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const cap = Math.min(Math.max(Number(fps) || 240, 30), 240);
+    win.webContents.setFrameRate(cap);
+  } catch (e) {}
+};
+
 const createWindow = () => {
   gameWindow = new BrowserWindow({
     width: 1280,
@@ -362,6 +407,13 @@ const createWindow = () => {
   });
 
   gameWindow.webContents.once("did-finish-load", () => {
+    _failLoadAttempt = 0;
+    _perf('game did-finish-load');
+    try {
+      gameWindow.webContents.executeJavaScript(
+        'if (performance.memory) console.log("[mem] heap after load:", Math.round(performance.memory.usedJSHeapSize / 1048576) + "MB");'
+      );
+    } catch (e) {}
     if (gameWindow && !gameWindow.isVisible() && !gameWindow.isDestroyed()) {
       gameWindow.show();
     }
@@ -389,7 +441,11 @@ const createWindow = () => {
 
   gameWindow.webContents.on("did-fail-load", (_, code, desc) => {
     if (code === -3 || code === -6) {
-      setTimeout(() => { try { gameWindow.reload(); } catch (e) {} }, 2000);
+      // Back off: 2s → 4s → 8s → … (max 15s) so a dead server or offline
+      // network doesn't hammer a reload loop every 2 seconds forever.
+      _failLoadAttempt++;
+      const delay = Math.min(2000 * Math.pow(2, _failLoadAttempt - 1), 15000);
+      setTimeout(() => { try { gameWindow.reload(); } catch (e) {} }, delay);
     }
   });
 
@@ -398,7 +454,6 @@ const createWindow = () => {
   });
 
   gameWindow.webContents.on("did-navigate-in-page", (e, url) => {
-    gameWindow.webContents.send("url-change", url);
     const wasInMatch = _navIsMatch(_navPreviousUrl);
     const nowInMatch = _navIsMatch(url);
     if (wasInMatch && !nowInMatch) {
@@ -413,10 +468,6 @@ const createWindow = () => {
     releaseSyntheticKeys();
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
-    ipcMain.removeAllListeners("navigate-home");
-    ipcMain.removeAllListeners("screenshot");
-    ipcMain.removeAllListeners("toggle-fullscreen");
-    ipcMain.removeAllListeners("toggle-devtools");
     ipcMain.removeAllListeners("bhop-keys");
     gameWindow = null;
   });
@@ -443,12 +494,16 @@ const createWindow = () => {
 
   initPatchProtocol();
   const customFiles = initResourceSwapper();
+  startMemoryWatchdog();
 
   const bundleFilter = { urls: ['*://kirka.io/assets/js/app.*.js', '*://kirka.io/assets/js/chunk-*.js'] };
-  const customFilterUrls = Object.keys(customFiles).length
-    ? Object.keys(customFiles).map(k => '*://*/*' + k)
-    : [];
-  const allUrls = [...bundleFilter.urls, ...customFilterUrls];
+  // Broad filter over the game's proxy domains AND their subdomains (assets
+  // are served from e.g. cdn.kirka.io / static.kirka.io), so sound/media URL
+  // matching is done in the handler (where we normalize underscores), not via
+  // brittle per-file URL filters.
+  const proxyDomains = ["kirka.io", "snipers.io", "ask101math.com", "fpsiogame.com", "cloudconverts.com"];
+  const proxyFilter = { urls: proxyDomains.flatMap(d => [`*://${d}/*`, `*://*.${d}/*`]) };
+  const allUrls = [...bundleFilter.urls, ...proxyFilter.urls];
 
   session.defaultSession.webRequest.onBeforeRequest(
     { urls: allUrls },
@@ -461,8 +516,13 @@ const createWindow = () => {
       if (Object.keys(customFiles).length) {
         try {
           const urlPath = new URL(details.url).pathname.replace(/^\//, '');
-          if (customFiles[urlPath]) {
-            return callback({ redirectURL: 'dawnclient://' + urlPath });
+          const base = urlPath.split('/').pop() || "";
+          // Normalize exactly like the swapper: strip underscores + lower-case
+          // so "___hit___.200043fa.mp3" matches "__hit__.200043fa.mp3".
+          const clean = base.replace(/\.mp3\.mp3$/i, ".mp3").replace(/_/g, "").toLowerCase();
+          const file = customFiles[clean];
+          if (file) {
+            return callback({ redirectURL: 'dawnclient://' + encodeURIComponent(file) });
           }
         } catch (e) {}
       }
@@ -472,15 +532,18 @@ const createWindow = () => {
   );
 
   const targetUrl = settings.base_url || "https://kirka.io/";
-  setTimeout(() => {
-    const urls = ['https://kirka.io', 'https://api2.kirka.io', 'https://login.xsolla.com'];
-    urls.forEach(u => {
-      session.defaultSession.cookies.get({ url: u }).then(cookies => {
-        console.log(`[cookies] ${u}:`, cookies.map(c => `${c.name}=${c.value} domain=${c.domain} samesite=${c.sameSite}`).join(', ') || '(none)');
-      }).catch(() => {});
-    });
-  }, 10000);
+  if (process.env.DAWN_DEBUG) {
+    setTimeout(() => {
+      const urls = ['https://kirka.io', 'https://api2.kirka.io', 'https://login.xsolla.com'];
+      urls.forEach(u => {
+        session.defaultSession.cookies.get({ url: u }).then(cookies => {
+          console.log(`[cookies] ${u}:`, cookies.map(c => `${c.name}=${c.value} domain=${c.domain} samesite=${c.sameSite}`).join(', ') || '(none)');
+        }).catch(() => {});
+      });
+    }, 10000);
+  }
   gameWindow.loadURL(targetUrl);
+  applyFrameCap(gameWindow, settings.fps_cap);
   gameWindow.maximize();
 
   setTimeout(() => {
@@ -499,12 +562,26 @@ const _navIsMatch = (url) => {
   } catch { return false; }
 };
 
-const matchEnded = () => {
-  console.log("[game] Match ended — flushing GPU state");
+const _forceGC = () => {
+  if (!gameWindow || gameWindow.isDestroyed()) return;
   try {
     gameWindow.webContents.executeJavaScript(
       'if (typeof gc === "function") { gc(true); gc(true); }'
     );
+  } catch (e) {}
+};
+
+let _lastMatchEndedAt = 0;
+const matchEnded = () => {
+  const now = Date.now();
+  if (now - _lastMatchEndedAt < 3000) return;
+  _lastMatchEndedAt = now;
+  console.log("[game] Match ended — flushing GPU state");
+  try {
+    gameWindow.webContents.executeJavaScript(`
+      if (typeof gc === "function") { gc(true); gc(true); }
+      if (performance.memory) console.log("[mem] heap after match:", Math.round(performance.memory.usedJSHeapSize / 1048576) + "MB");
+    `);
   } catch (e) {}
 
   setTimeout(() => {
@@ -522,25 +599,60 @@ const matchEnded = () => {
   }, 300);
 };
 
-const initGame = () => {
-  pruneBundleCache();
-  createSplashWindow();
-  setTimeout(() => {
-    createWindow();
-    if (gameWindow) {
-      gameWindow.webContents.once("did-finish-load", () => {
-        setTimeout(() => {
-          if (splashWindow && !splashWindow.isDestroyed()) {
-            splashWindow.close();
-          }
-        }, 200);
-      });
-    }
-  }, 100);
-  setTimeout(() => { warmBundleCache(); }, 400);
+// ── Renderer memory watchdog ──────────────────────────────────────────────
+// The game bundle leaks per match (textures/models accumulate); guard against
+// the "fine at first, progressively slower" creep. Nudge GC over the soft
+// limit, hard-reload (only outside a match) over the hard limit.
+const _MEM_WATCH_MS = 30000;
+const _MEM_SOFT_LIMIT = 2 * 1024 * 1024 * 1024;
+const _MEM_HARD_LIMIT = 3.5 * 1024 * 1024 * 1024;
+let _memWatchTimer = null;
+
+const startMemoryWatchdog = () => {
+  if (_memWatchTimer) return;
+  _memWatchTimer = setInterval(async () => {
+    try {
+      if (!gameWindow || gameWindow.isDestroyed()) return;
+      if (gameWindow.webContents.isLoading()) return;
+      const info = await gameWindow.webContents.getProcessMemoryInfo();
+      const rss = info.privateMemory || info.workingSetSize || 0;
+      const inMatch = _navIsMatch(gameWindow.webContents.getURL());
+      if (rss > _MEM_HARD_LIMIT && !inMatch) {
+        console.warn(`[mem] renderer RSS ${(rss / 1073741824).toFixed(2)}GB — hard reload`);
+        gameWindow.reload();
+      } else if (rss > _MEM_SOFT_LIMIT && !inMatch) {
+        console.warn(`[mem] renderer RSS ${(rss / 1073741824).toFixed(2)}GB — forcing GC`);
+        _forceGC();
+      }
+    } catch (e) {}
+  }, _MEM_WATCH_MS);
 };
 
-app.on("ready", async () => {
+const _t0 = Date.now();
+const _perf = (label) => console.log(`[perf] ${label} +${Date.now() - _t0}ms`);
+
+const initGame = () => {
+  _perf('initGame');
+  pruneBundleCache();
+  createSplashWindow();
+  // Warm in parallel — never block window creation on the network.
+  warmBundleCache().catch(() => {});
+  // The splash window is alwaysOnTop and paints within ~50ms, so the game
+  // window starts loading immediately — no artificial delay needed.
+  createWindow();
+  if (gameWindow) {
+    gameWindow.webContents.once("did-finish-load", () => {
+      setTimeout(() => {
+        if (splashWindow && !splashWindow.isDestroyed()) {
+          splashWindow.close();
+        }
+      }, 200);
+    });
+  }
+};
+
+app.on("ready", () => {
+  _perf('app ready');
   initGame();
   try { os.setPriority(process.pid, -10); } catch (e) {}
   try {

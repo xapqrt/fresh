@@ -3,6 +3,12 @@ productName: Dawn Client
 directories:
   output: "build"
 npmRebuild: false
+files:
+  - "src/**/*"
+  - "!src/wasm/target"
+  - "!src/node_modules"
+  - "assets/splash.html"
+  - "package.json"
 win:
   target:
     - target: nsis

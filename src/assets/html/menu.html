@@ -138,13 +138,6 @@
       </div>
       <div class="option-group">
         <div class="option">
-          <span>Rave Mode</span>
-          <div class="checkbox">
-            <input type="checkbox" id="rave_mode" data-setting="rave_mode" />
-            <label for="rave_mode"></label>
-          </div>
-        </div>
-        <div class="option">
           <div class="left">
             <span>Colored Kill Feed</span>
             <span class="description">Color kills by team</span>
@@ -759,7 +752,7 @@
           Community
           <a href="https://kirkacommunityhub.pages.dev/" target="_blank" class="about-kcl"
             style="height: 32px; width: 32px; margin-left: auto;" title="Kirka Community Hub">
-            <img src="https://kirkacommunityhub.pages.dev/assets/icon.png"
+            <img loading="lazy" decoding="async" src="https://kirkacommunityhub.pages.dev/assets/icon.png"
               style="width: 100%; height: 100%; object-fit: cover;" />
           </a>
         </div>
@@ -813,6 +806,28 @@
     </div>
     <div id="performance-options" class="juice options">
       <div class="option-group">
+        <div class="option">
+          <div class="left">
+            <span>Performance Mode</span>
+            <span class="description">Disables menu animations & blur for maximum FPS</span>
+          </div>
+          <div class="checkbox">
+            <input type="checkbox" id="performance_mode" data-setting="performance_mode" />
+            <label for="performance_mode"></label>
+          </div>
+        </div>
+        <div class="option requires-restart">
+          <div class="left">
+            <span>Low Latency Mode</span>
+            <span class="description">Uncaps VSync & frame rate for lowest input latency (may tear on 60Hz)</span>
+          </div>
+          <div class="checkbox">
+            <input type="checkbox" id="low_latency" data-setting="low_latency" />
+            <label for="low_latency"></label>
+          </div>
+        </div>
+      </div>
+      <div class="option-group">
         <div class="option requires-restart">
           <span>In Process GPU</span>
           <div class="checkbox">
@@ -827,13 +842,6 @@
           <div class="checkbox">
             <input type="checkbox" id="auto_fullscreen" data-setting="auto_fullscreen" />
             <label for="auto_fullscreen"></label>
-          </div>
-        </div>
-        <div class="option">
-          <span>Skip Loading Screen</span>
-          <div class="checkbox">
-            <input type="checkbox" id="skip_loading" data-setting="skip_loading" />
-            <label for="skip_loading"></label>
           </div>
         </div>
       </div>
@@ -1301,7 +1309,7 @@
     <div id="about-client" class="juice options">
       <div class="option-group">
         <div class="about-top header">
-          <img src="https://i.imgur.com/1ETqqkj.png" />
+          <img loading="lazy" decoding="async" src="https://i.imgur.com/1ETqqkj.png" />
           <div class="about-info">
             <span class="title">Dawn Client</span>
             <div class="about-more">
@@ -1311,7 +1319,7 @@
               </div>
               <div class="about-buttons">
                 <a href="https://kirkacommunityhub.pages.dev/" target="_blank" class="about-kcl">
-                  <img src="https://kirkacommunityhub.pages.dev/assets/icon.png"
+                  <img loading="lazy" decoding="async" src="https://kirkacommunityhub.pages.dev/assets/icon.png"
                     style="height: 100%; width: 100%; object-fit: cover;" />
                 </a>
                 <a href="https://discord.gg/VsMEQ3HWs2" target="_blank" class="about-discord">
@@ -1329,7 +1337,7 @@
       </div>
       <div class="option-group">
         <div class="about-top compact">
-          <img src="https://i.imgur.com/kkykpLk.png" />
+          <img loading="lazy" decoding="async" src="https://i.imgur.com/kkykpLk.png" />
           <div class="about-info compact">
             <span class="title">KTiers</span>
             <div class="about-more">

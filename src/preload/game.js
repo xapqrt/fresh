@@ -2,10 +2,10 @@ const { installBhopHook } = require("./game/bhop");
 require("../addons/Custom Skin Link.js");
 
 const weaponHook = require('../webgl/weapon-hook');
-const observerRouter = require('../dom/observer-router');
 
 const fs = require('fs');
 const path = require('path');
+const { navCacheGet, navCacheSet } = require('../util/nav-cache');
 
 const _cssStyleId = "dawn-custom-css";
 const _advancedStyleId = "dawn-advanced-css";
@@ -62,7 +62,12 @@ function injectMenu() {
     return;
   }
   try {
-    const html = fs.readFileSync(path.join(__dirname, '../assets/html/menu.html'), 'utf-8');
+    const menuPath = path.join(__dirname, '../assets/html/menu.html');
+    let html = navCacheGet(menuPath);
+    if (html === undefined) {
+      html = fs.readFileSync(menuPath, 'utf-8');
+      navCacheSet(menuPath, html);
+    }
     _menuEl = document.createElement('div');
     _menuEl.id = 'dawn-menu-container';
     _menuEl.innerHTML = html;
@@ -71,7 +76,12 @@ function injectMenu() {
     document.body.appendChild(_menuEl);
 
     if (!_menuCssInjected) {
-      const css = fs.readFileSync(path.join(__dirname, '../assets/css/menu.css'), 'utf-8');
+      const cssPath = path.join(__dirname, '../assets/css/menu.css');
+      let css = navCacheGet(cssPath);
+      if (css === undefined) {
+        css = fs.readFileSync(cssPath, 'utf-8');
+        navCacheSet(cssPath, css);
+      }
       const style = document.createElement('style');
       style.id = 'dawn-menu-css';
       style.textContent = css;
@@ -83,6 +93,7 @@ function injectMenu() {
     if (menuEl && !menuEl.hasAttribute('data-active')) {
       menuEl.setAttribute('data-active', 'false');
     }
+    applyPerfMode();
 
     _menuEl.addEventListener('change', (e) => {
       const el = e.target.closest('[data-setting]');
@@ -122,6 +133,15 @@ function loadSettingsIntoMenu() {
   } catch (e) {}
 }
 
+// performance_mode: strip menu transitions/animations/blur for lower overhead.
+function applyPerfMode() {
+  if (!_menuEl) return;
+  const menuEl = _menuEl.querySelector('.menu');
+  if (!menuEl) return;
+  const perf = _localSettings ? _localSettings.performance_mode !== false : true;
+  menuEl.classList.toggle('perf-mode', perf);
+}
+
 function setMenuOpen(open) {
   injectMenu();
   if (!_menuEl) return;
@@ -129,7 +149,14 @@ function setMenuOpen(open) {
   if (!menuEl) return;
   menuEl.setAttribute('data-active', open ? 'true' : 'false');
   _menuEl.style.display = open ? '' : 'none';
-  if (open) loadSettingsIntoMenu();
+  if (open) {
+    loadSettingsIntoMenu();
+    // Kirka holds the Pointer Lock while in-game, which locks the cursor and
+    // swallows mouse events — making the injected menu stuck & unresponsive.
+    // Release it so the menu can be clicked/dragged; it re-locks on click.
+    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
+  }
+  applyPerfMode();
 }
 
 function toggleMenu() {
@@ -188,6 +215,7 @@ document.addEventListener("juice-settings-changed", (e) => {
   if (["css_link", "css_enabled", "advanced_css"].includes(setting)) {
     loadCustomCSS();
   }
+  if (setting === "performance_mode") applyPerfMode();
   if (_localSettings) updateWeaponConfig(_localSettings);
 });
 
@@ -263,11 +291,18 @@ if (document.readyState === "loading") {
     installBhopHook(() => _localSettings);
     loadCustomCSS();
     weaponHook.hookWebGL();
-    observerRouter.start();
   });
 } else {
   installBhopHook(() => _localSettings);
   loadCustomCSS();
   weaponHook.hookWebGL();
-  observerRouter.start();
 }
+
+// The game injects its own stylesheet during bootstrap (after DOMContentLoaded),
+// so CSS applied at DOMContentLoaded loses the cascade. Re-apply after full
+// load and a few delayed passes — injectStyle re-inserts the <style> at the end
+// of <head>, which wins on equal specificity. Idempotent and cheap (the remote
+// link is cached in _cssCache after the first fetch).
+window.addEventListener("load", loadCustomCSS);
+setTimeout(loadCustomCSS, 2000);
+setTimeout(loadCustomCSS, 5000);
