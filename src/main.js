@@ -123,7 +123,8 @@ ipcMain.on("bhop-keys", (_, events) => {
 // Bundle cache: memory + disk (keyed by URL filename, e.g. app.abc123.js)
 // P0-1: filename is version-suffixed so any patch change invalidates old
 // entries; stale entries are pruned at startup (see pruneBundleCache).
-const PATCH_VERSION = 2;
+// The version is derived from the needle set (below), so editing PATCHES
+// invalidates the cache automatically — no manual bump to remember.
 const _bundleCache = new Map();
 const _cacheDir = () => path.join(app.getPath('userData'), 'bundle-cache');
 const _cacheKey = (url) => { try { return (new URL(url).pathname.split('/').pop() || url) + '.p' + PATCH_VERSION; } catch { return url + '.p' + PATCH_VERSION; } };
@@ -237,6 +238,17 @@ const PATCHES = [
   },
 ];
 
+// FNV-1a over the needle set → any patch edit auto-invalidates cached bundles.
+const _patchHash = (s) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+};
+const PATCH_VERSION = _patchHash(JSON.stringify(PATCHES));
+
 const applyPatches = (code) => {
   const meta = { version: PATCH_VERSION, applied: [], missing: [] };
   for (const p of PATCHES) {
@@ -283,7 +295,7 @@ const warmBundleCache = async () => {
     const html = await fetchText(base);
     const m = html.match(/assets\/js\/(app\.\w+\.js)/);
     if (!m) { console.warn('[dawn-patch] warm: app bundle URL not found in index page'); return false; }
-    const url = new URL(m[1], 'https://kirka.io/').href;
+    const url = new URL(m[1], base).href;
     if (_cacheGet(url)) { console.log('[dawn-patch] warm: already cached', m[1]); return true; }
     await patchAndCache(url);
     return true;
@@ -361,7 +373,9 @@ const createSplashWindow = () => {
 const applyFrameCap = (win, fps) => {
   if (!win || win.isDestroyed()) return;
   try {
-    const cap = Math.min(Math.max(Number(fps) || 240, 30), 240);
+    // Clamp supports high-refresh displays (360/540Hz) — Chromium tops out at
+    // ~1000fps; the effective rate is still bounded by the display.
+    const cap = Math.min(Math.max(Number(fps) || 240, 30), 1000);
     win.webContents.setFrameRate(cap);
   } catch (e) {}
 };
@@ -435,7 +449,15 @@ const createWindow = () => {
 
   gameWindow.webContents.on("unresponsive", () => {
     setTimeout(() => {
-      try { gameWindow.reload(); } catch (e) {}
+      try {
+        // Never hard-reload mid-match — that's an instant loss. Only recover
+        // outside a match; in-game we let the renderer settle or crash-handle.
+        if (_navIsMatch(gameWindow.webContents.getURL())) {
+          console.warn("[game] Unresponsive mid-match — skipping reload");
+          return;
+        }
+        gameWindow.reload();
+      } catch (e) {}
     }, 5000);
   });
 

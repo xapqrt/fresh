@@ -113,6 +113,23 @@ function injectMenu() {
   }
 }
 
+function loadPatchStatus() {
+  const el = _menuEl && _menuEl.querySelector('#dawn-patch-status');
+  if (!el) return;
+  try {
+    const m = window.__patchMeta;
+    if (!m || !Array.isArray(m.applied)) {
+      el.textContent = 'No patches loaded — game bundle not intercepted.';
+      return;
+    }
+    const ok = m.applied.length ? m.applied.join(', ') : '—';
+    const miss = m.missing && m.missing.length ? m.missing.join(', ') : '—';
+    el.textContent = `v${m.version} — applied [${ok}] · missing [${miss}]`;
+  } catch (e) {
+    el.textContent = 'Patch status unavailable.';
+  }
+}
+
 function loadSettingsIntoMenu() {
   if (!_menuEl) return;
   const s = _localSettings;
@@ -151,6 +168,7 @@ function setMenuOpen(open) {
   _menuEl.style.display = open ? '' : 'none';
   if (open) {
     loadSettingsIntoMenu();
+    loadPatchStatus();
     // Kirka holds the Pointer Lock while in-game, which locks the cursor and
     // swallows mouse events — making the injected menu stuck & unresponsive.
     // Release it so the menu can be clicked/dragged; it re-locks on click.
