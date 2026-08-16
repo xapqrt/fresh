@@ -27,12 +27,12 @@ function installBhopHook(getSettings) {
   function _readKeys() {
     var s = typeof getSettings === 'function' ? getSettings() : null;
     var toggle = (s && s.bhop_toggle) || 'Shift';
-    var jump = (s && s.bhop_jump) || 'KeySpace';
+    var jump = (s && s.bhop_jump) || 'KeyQ';
     _toggleCode = toggle === 'Control' ? 'ControlLeft' : (toggle === 'Alt' ? 'AltLeft' : 'ShiftLeft');
-    // Kirka's jump is Space; Q is now sit/crouch, so anything but an explicit
-    // W (strafe-jump) resolves to Space.
+    // Jump key is Q in Kirka (Q = jump, Shift = crouch). Space plays no part.
     if (jump === 'KeyW' || jump === 'w') _jumpChar = 'w';
-    else _jumpChar = ' ';
+    else if (jump === 'KeyQ' || jump === 'q') _jumpChar = 'q';
+    else _jumpChar = 'q';
   }
 
   function _enabled() {

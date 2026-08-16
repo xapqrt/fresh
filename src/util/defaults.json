@@ -77,7 +77,7 @@
     "inspect_duration": "700",
     "inspect_keybind": "KeyZ",
     "bhop_enabled": true,
-    "bhop_jump": "KeySpace",
+    "bhop_jump": "KeyQ",
     "bhop_toggle": "Shift",
     "stiff_models": false,
     "local_customizations": false,
