@@ -184,7 +184,7 @@ function installBhopHook(getSettings) {
     _readKeys();
     if (e.code === "ControlLeft" && _toggleCode !== "ControlLeft") {
       _ctrlDown = true;
-      _queueKey("ShiftLeft", true);
+      _queueKey("Shift", true);
       queueMicrotask(_flushKeys);
     }
     else if (e.code === _toggleCode) {
@@ -201,7 +201,7 @@ function installBhopHook(getSettings) {
     _readKeys();
     if (e.code === "ControlLeft" && _toggleCode !== "ControlLeft") {
       _ctrlDown = false;
-      _queueKey("ShiftLeft", false);
+      _queueKey("Shift", false);
       queueMicrotask(_flushKeys);
     }
     else if (e.code === _toggleCode) { _shiftDown = false; _stop(); }

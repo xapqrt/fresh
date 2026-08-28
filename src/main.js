@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut } = require("electron");
+const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, shell } = require("electron");
 const { applySwitches } = require("./util/switches");
 const { default_settings, allowed_urls } = require("./util/defaults.json");
 const path = require("path");
@@ -83,9 +83,6 @@ ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
 ipcMain.on("update-setting", (e, key, value) => {
   settings[key] = value;
   store.set("settings", settings);
-  if (key === "fps_cap" && gameWindow && !gameWindow.isDestroyed()) {
-    applyFrameCap(gameWindow, value);
-  }
   if (gameWindow && !gameWindow.isDestroyed()) {
     gameWindow.webContents.send("settings-updated", settings);
   }
@@ -117,6 +114,79 @@ ipcMain.on("bhop-keys", (_, events) => {
       type: down ? "keyDown" : "keyUp",
       keyCode: code,
     });
+  }
+});
+
+// ── Menu support IPC (folders, swapper saves, settings import/reset) ───────
+// Swapped assets (skins/sounds) all live in the resource-swapper `custom` dir —
+// the webRequest handler matches them by normalized basename, so saving a file
+// named exactly like the game's asset is all that's needed.
+const _customDir = () => path.join(app.getPath("userData"), "custom");
+const _scriptsDir = () => path.join(app.getPath("userData"), "scripts");
+const _galleryDir = () => path.join(app.getPath("userData"), "gallery");
+
+ipcMain.on("get-sounds-path", (e) => { e.returnValue = _customDir(); });
+ipcMain.on("get-scripts-path", (e) => {
+  try { fs.mkdirSync(_scriptsDir(), { recursive: true }); } catch (err) {}
+  e.returnValue = _scriptsDir();
+});
+
+const _openFolder = (dir) => {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    shell.openPath(dir);
+  } catch (e) {}
+};
+ipcMain.on("open-swapper-folder", () => _openFolder(_customDir()));
+ipcMain.on("open-sounds-folder", () => _openFolder(_customDir()));
+ipcMain.on("open-skins-folder", () => _openFolder(_customDir()));
+ipcMain.on("open-scripts-folder", () => _openFolder(_scriptsDir()));
+ipcMain.on("open-gallery-folder", () => _openFolder(_galleryDir()));
+
+ipcMain.on("save-skin-local", (_, skinname, filePath) => {
+  try {
+    fs.mkdirSync(_customDir(), { recursive: true });
+    fs.copyFileSync(filePath, path.join(_customDir(), skinname));
+  } catch (e) {}
+});
+ipcMain.on("save-skin-from-buffer", (_, skinname, buffer) => {
+  try {
+    fs.mkdirSync(_customDir(), { recursive: true });
+    fs.writeFileSync(path.join(_customDir(), skinname), Buffer.from(buffer));
+  } catch (e) {}
+});
+
+ipcMain.on("save-sound", (_, soundname, soundFilePath) => {
+  try {
+    fs.mkdirSync(_customDir(), { recursive: true });
+    const dest = path.join(_customDir(), soundname);
+    fs.copyFileSync(soundFilePath, dest);
+    if (gameWindow && !gameWindow.isDestroyed()) gameWindow.webContents.send("save-sound-success");
+  } catch (e) {
+    if (gameWindow && !gameWindow.isDestroyed()) gameWindow.webContents.send("save-sound-error", e.message);
+  }
+});
+
+// Bulk update (weapon settings import sends the whole settings object).
+ipcMain.on("update-settings", (_, obj) => {
+  if (!obj || typeof obj !== "object") return;
+  for (const key of Object.keys(default_settings)) {
+    if (key in obj && typeof obj[key] === typeof default_settings[key]) {
+      settings[key] = obj[key];
+    }
+  }
+  store.set("settings", settings);
+  if (gameWindow && !gameWindow.isDestroyed()) {
+    gameWindow.webContents.send("settings-updated", settings);
+  }
+});
+
+ipcMain.on("reset-juice-settings", () => {
+  settings = { ...default_settings };
+  store.set("settings", settings);
+  if (gameWindow && !gameWindow.isDestroyed()) {
+    gameWindow.webContents.send("settings-updated", settings);
+    setTimeout(() => { try { gameWindow.reload(); } catch (e) {} }, 300);
   }
 });
 
@@ -369,17 +439,6 @@ const createSplashWindow = () => {
   splashWindow.on("closed", () => { splashWindow = null; });
 };
 
-// fps_cap setting → live frame-rate limit on the game contents.
-const applyFrameCap = (win, fps) => {
-  if (!win || win.isDestroyed()) return;
-  try {
-    // Clamp supports high-refresh displays (360/540Hz) — Chromium tops out at
-    // ~1000fps; the effective rate is still bounded by the display.
-    const cap = Math.min(Math.max(Number(fps) || 240, 30), 1000);
-    win.webContents.setFrameRate(cap);
-  } catch (e) {}
-};
-
 const createWindow = () => {
   gameWindow = new BrowserWindow({
     width: 1280,
@@ -428,6 +487,15 @@ const createWindow = () => {
         'if (performance.memory) console.log("[mem] heap after load:", Math.round(performance.memory.usedJSHeapSize / 1048576) + "MB");'
       );
     } catch (e) {}
+    // Debug aid: DAWN_SHOOT=/path.png captures the page after load settles.
+    if (process.env.DAWN_SHOOT) {
+      const shotPath = process.env.DAWN_SHOOT;
+      setTimeout(() => {
+        gameWindow?.webContents.capturePage().then((img) => {
+          try { fs.writeFileSync(shotPath, img.toPNG()); console.log("[dawn] screenshot:", shotPath); } catch (e) {}
+        }).catch(() => {});
+      }, 9000);
+    }
     if (gameWindow && !gameWindow.isVisible() && !gameWindow.isDestroyed()) {
       gameWindow.show();
     }
@@ -475,7 +543,14 @@ const createWindow = () => {
     releaseSyntheticKeys();
   });
 
+  // The preload's feature router (info overlay, lobby/in-game handlers, etc.)
+  // is driven by url-change events — SPA pushes included.
+  const _sendUrlChange = (url) => {
+    try { if (gameWindow && !gameWindow.isDestroyed()) gameWindow.webContents.send("url-change", url); } catch (e) {}
+  };
+  gameWindow.webContents.on("did-navigate", (_, url) => _sendUrlChange(url));
   gameWindow.webContents.on("did-navigate-in-page", (e, url) => {
+    _sendUrlChange(url);
     const wasInMatch = _navIsMatch(_navPreviousUrl);
     const nowInMatch = _navIsMatch(url);
     if (wasInMatch && !nowInMatch) {
@@ -491,6 +566,9 @@ const createWindow = () => {
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
     ipcMain.removeAllListeners("bhop-keys");
+    ["get-sounds-path", "get-scripts-path", "open-swapper-folder", "open-sounds-folder",
+      "open-skins-folder", "open-scripts-folder", "open-gallery-folder", "save-skin-local",
+      "save-skin-from-buffer", "save-sound", "update-settings", "reset-juice-settings"].forEach((ch) => ipcMain.removeAllListeners(ch));
     gameWindow = null;
   });
 
@@ -565,7 +643,6 @@ const createWindow = () => {
     }, 10000);
   }
   gameWindow.loadURL(targetUrl);
-  applyFrameCap(gameWindow, settings.fps_cap);
   gameWindow.maximize();
 
   setTimeout(() => {

@@ -579,45 +579,64 @@
                         <input type="range" id="weapon_offset_z" class="slider-value" data-setting="weapon_offset_z"
                           min="-0.5" step="0.01" max="0.5" />
                         <label for="weapon_offset_z"></label>
-          </div>
-        </div>
-      </div>
-      <div id="combat-options" class="juice options inner">
-        <div class="option-group">
-          <div class="option">
-            <div class="left">
-              <span>Auto Bhop (Fast)</span>
-              <span class="description">Hold the toggle key (default Shift) to auto-hop; simulates your jump key at max speed with zero added delay</span>
-            </div>
-            <div class="checkbox">
-              <input type="checkbox" id="bhop_enabled" data-setting="bhop_enabled" />
-              <label for="bhop_enabled"></label>
-            </div>
-          </div>
-          <div class="option">
-            <div class="left">
-              <span>Bhop Toggle Key</span>
-              <span class="description">The key that starts/stops bhop (must differ from your jump key)</span>
-            </div>
-            <select data-setting="bhop_toggle">
-              <option value="Shift">Shift</option>
-              <option value="Control">Control</option>
-              <option value="Alt">Alt</option>
-            </select>
-          </div>
-          <div class="option">
-            <div class="left">
-              <span>Bhop Jump Key</span>
-              <span class="description">The key the game uses to jump (Kirka default is Q)</span>
-            </div>
-            <select data-setting="bhop_jump">
-              <option value="KeyQ">Q</option>
-              <option value="KeyW">W</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="option dropdown">
+                <div class="top">
+                  <i class="fas fa-angle-down"></i>
+                  <span>Weapon Rotation</span>
+                </div>
+                <div class="content" style="display:flex; flex-direction:column; gap:8px">
+                  <div class="option">X
+                    <div class="right"
+                      style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
+                      <input type="text" class="weapon-rotation-x-value" placeholder="0" style="width: 21.5%"
+                        maxlength="5" />
+                      <div class="slider">
+                        <input type="range" id="weapon_rotation_x" class="slider-value" min="-180" step="1" max="180" />
+                        <label for="weapon_rotation_x"></label>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="option">Y
+                    <div class="right"
+                      style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
+                      <input type="text" class="weapon-rotation-y-value" placeholder="0" style="width: 21.5%"
+                        maxlength="5" />
+                      <div class="slider">
+                        <input type="range" id="weapon_rotation_y" class="slider-value" min="-180" step="1" max="180" />
+                        <label for="weapon_rotation_y"></label>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="option">Z
+                    <div class="right"
+                      style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
+                      <input type="text" class="weapon-rotation-z-value" placeholder="0" style="width: 21.5%"
+                        maxlength="5" />
+                      <div class="slider">
+                        <input type="range" id="weapon_rotation_z" class="slider-value" min="-180" step="1" max="180" />
+                        <label for="weapon_rotation_z"></label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="option">
+                <span>Inspect Duration</span>
+                <div class="right"
+                  style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
+                  <input type="text" class="weapon-inspect-duration-value" placeholder="750" style="width: 21.5%"
+                    maxlength="4" />
+                  <div class="slider">
+                    <input type="range" id="weapon_inspect_duration" class="slider-value" min="100" step="50"
+                      max="2000" />
+                    <label for="weapon_inspect_duration"></label>
+                  </div>
+                </div>
               </div>
               <div class="option">
                 <button id="reset-weapon-settings" class="juice-button large">
@@ -663,8 +682,8 @@
                 <div class="option arm-color" style="justify-content: flex-end">
                   <div class="color-input"
                     style="display: flex; width: 38.4%; margin-top: 0.5rem; margin-bottom: 1.5rem;">
-                    <input type="text" class="hex" placeholder="#FFFFFF" maxlength="7" data-setting="arm_color_hex" />
-                    <input type="color" class="color-picker" value="#FFFFFF" data-setting="arm_color_hex" />
+                    <input type="text" class="hex" placeholder="#FFFFFF" maxlength="7" />
+                    <input type="color" class="color-picker" value="#FFFFFF" />
                   </div>
                 </div>
                 <div class="option">
@@ -696,8 +715,7 @@
                 <span>Arm Offset</span>
               </div>
               <div class="content" style="display:flex; flex-direction:column; gap:8px">
-                <div class="option">
-                  X
+                <div class="option">X
                   <div class="right"
                     style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
                     <input type="text" class="arm-offset-x-value" placeholder="0" style="width: 21.5%" maxlength="5" />
@@ -708,8 +726,7 @@
                     </div>
                   </div>
                 </div>
-                <div class="option">
-                  Y
+                <div class="option">Y
                   <div class="right"
                     style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
                     <input type="text" class="arm-offset-y-value" placeholder="0" style="width: 21.5%" maxlength="5" />
@@ -720,8 +737,7 @@
                     </div>
                   </div>
                 </div>
-                <div class="option">
-                  Z
+                <div class="option">Z
                   <div class="right"
                     style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
                     <input type="text" class="arm-offset-z-value" placeholder="0" style="width: 21.5%" maxlength="5" />
@@ -729,6 +745,47 @@
                       <input type="range" id="arm_offset_z" class="slider-value" data-setting="arm_offset_z" min="-0.5"
                         step="0.01" max="0.5" />
                       <label for="arm_offset_z"></label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="option dropdown">
+              <div class="top">
+                <i class="fas fa-angle-down"></i>
+                <span>Arm Rotation</span>
+              </div>
+              <div class="content" style="display:flex; flex-direction:column; gap:8px">
+                <div class="option">X
+                  <div class="right"
+                    style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
+                    <input type="text" class="arm-rotation-x-value" placeholder="0" style="width: 21.5%"
+                      maxlength="5" />
+                    <div class="slider">
+                      <input type="range" id="arm_rotation_x" class="slider-value" min="-180" step="1" max="180" />
+                      <label for="arm_rotation_x"></label>
+                    </div>
+                  </div>
+                </div>
+                <div class="option">Y
+                  <div class="right"
+                    style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
+                    <input type="text" class="arm-rotation-y-value" placeholder="0" style="width: 21.5%"
+                      maxlength="5" />
+                    <div class="slider">
+                      <input type="range" id="arm_rotation_y" class="slider-value" min="-180" step="1" max="180" />
+                      <label for="arm_rotation_y"></label>
+                    </div>
+                  </div>
+                </div>
+                <div class="option">Z
+                  <div class="right"
+                    style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
+                    <input type="text" class="arm-rotation-z-value" placeholder="0" style="width: 21.5%"
+                      maxlength="5" />
+                    <div class="slider">
+                      <input type="range" id="arm_rotation_z" class="slider-value" min="-180" step="1" max="180" />
+                      <label for="arm_rotation_z"></label>
                     </div>
                   </div>
                 </div>
@@ -744,7 +801,42 @@
           </div>
         </div>
       </div>
-    </div>
+    <div id="combat-options" class="juice options inner">
+        <div class="option-group">
+          <div class="option">
+            <div class="left">
+              <span>Auto Bhop (Fast)</span>
+              <span class="description">Hold the toggle key (default Left Shift) to auto-hop; simulates your jump key at max speed with zero added delay</span>
+            </div>
+            <div class="checkbox">
+              <input type="checkbox" id="bhop_enabled" data-setting="bhop_enabled" />
+              <label for="bhop_enabled"></label>
+            </div>
+          </div>
+          <div class="option">
+            <div class="left">
+              <span>Bhop Toggle Key</span>
+              <span class="description">The key that starts/stops bhop. Ctrl works as a dedicated crouch key</span>
+            </div>
+            <select data-setting="bhop_toggle">
+              <option value="Shift">Shift</option>
+              <option value="Control">Control</option>
+              <option value="Alt">Alt</option>
+            </select>
+          </div>
+          <div class="option">
+            <div class="left">
+              <span>Bhop Jump Key</span>
+              <span class="description">The key the game uses to jump (Kirka default is Q)</span>
+            </div>
+            <select data-setting="bhop_jump">
+              <option value="KeyQ">Q</option>
+              <option value="KeyW">W</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      </div>
     <div id="browse-options" class="juice options">
       <div id="inner-tabs" class="juice tabs">
         <div data-tab="community" class="juice inner-tab">
