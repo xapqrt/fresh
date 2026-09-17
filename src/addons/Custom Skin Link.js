@@ -531,6 +531,17 @@ const _cslIsArrayWrapper = function(arg) {
   const customSkinLink = getCurrentSkinUrl();
   if (!customSkinLink) return oldIsArr.call(Array, arg);
 
+  // Never overwrite map/block/world textures or skyboxes
+  const mapTexUrl = localStorage.getItem("SETTINGS___SETTING/BLOCKS___SETTING/TEXTURE_URL___SETTING");
+  if (mapTexUrl && (image.src === mapTexUrl || customSkinLink === mapTexUrl)) {
+    return oldIsArr.call(Array, arg);
+  }
+  if (typeof image.src === "string" && (
+    /texture-blocks|Grass|Earth|Stone|Sand|Mud|Wood|Metal|block|map|terrain|atlas|skybox|env/i.test(image.src)
+  )) {
+    return oldIsArr.call(Array, arg);
+  }
+
   const ingameOnly = localStorage.csl_ingame_only !== "false";
   const canSwap = ingameOnly ? _isIngame() : true;
 

@@ -527,6 +527,19 @@ const createWindow = () => {
   const proxyFilter = { urls: proxyDomains.flatMap(d => [`*://${d}/*`, `*://*.${d}/*`]) };
   const allUrls = [...bundleFilter.urls, ...proxyFilter.urls];
 
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    const origin = details.requestHeaders?.Origin || details.requestHeaders?.origin;
+    headers['Access-Control-Allow-Origin'] = origin ? [origin] : ['*'];
+    headers['Access-Control-Allow-Credentials'] = ['true'];
+    headers['Access-Control-Allow-Methods'] = ['GET, POST, OPTIONS, HEAD'];
+    headers['Access-Control-Allow-Headers'] = ['*'];
+    headers['Cross-Origin-Resource-Policy'] = ['cross-origin'];
+    delete headers['content-security-policy'];
+    delete headers['Content-Security-Policy'];
+    callback({ responseHeaders: headers });
+  });
+
   session.defaultSession.webRequest.onBeforeRequest(
     { urls: allUrls },
     (details, callback) => {

@@ -1,7 +1,45 @@
 const { installBhopHook } = require("./game/bhop");
 require("../addons/Custom Skin Link.js");
-
 const weaponHook = require('../webgl/weapon-hook');
+
+// Kirka has an in-game Blocks setting: "RGB Effect" with "Brightness".
+// If RGB Effect is ON (1) and Brightness is 0 (or very low), Kirka's block shader multiplies
+// the block/map texture by 0, causing all map textures to render completely pitch black!
+// We detect and fix this invalid state in localStorage.
+function sanitizeBlockRgbSettings() {
+  try {
+    const rawRgb = localStorage.getItem("SETTINGS___SETTING/BLOCKS___SETTING/RGB_EFFECT___SETTING");
+    const rawBri = localStorage.getItem("SETTINGS___SETTING/BLOCKS___SETTING/RGB_EFFECT_BRIGHTNESS___SETTING");
+    if (rawRgb === "1" && (rawBri === "0" || (rawBri !== null && parseFloat(rawBri) <= 0.05))) {
+      console.warn("[Dawn] Detected Blocks RGB Effect with 0 brightness (causes black map textures). Resetting brightness to 1 and disabling RGB effect.");
+      localStorage.setItem("SETTINGS___SETTING/BLOCKS___SETTING/RGB_EFFECT___SETTING", "0");
+      localStorage.setItem("SETTINGS___SETTING/BLOCKS___SETTING/RGB_EFFECT_BRIGHTNESS___SETTING", "1");
+    }
+
+    // Also sanitize in all saved settings presets
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("settings.presets")) {
+        const val = localStorage.getItem(key);
+        if (val && val.includes("RGB_EFFECT")) {
+          try {
+            const data = JSON.parse(val);
+            if (data && data.BLOCKS___SETTING) {
+              const b = data.BLOCKS___SETTING;
+              if (b.RGB_EFFECT___SETTING === 1 && (b.RGB_EFFECT_BRIGHTNESS___SETTING === "0" || parseFloat(b.RGB_EFFECT_BRIGHTNESS___SETTING) <= 0.05)) {
+                b.RGB_EFFECT___SETTING = 0;
+                b.RGB_EFFECT_BRIGHTNESS___SETTING = "1";
+                localStorage.setItem(key, JSON.stringify(data));
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+sanitizeBlockRgbSettings();
 
 const fs = require('fs');
 const path = require('path');
