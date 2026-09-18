@@ -579,6 +579,41 @@ const PATCHES = [
     needle: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),iL[dhc(0x3918)](0x1/ iM*window[dhc(0x243e)])",
     replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;iL[dhc(0x3918)](_dt/(window.__dawnTickMul||1)*window[dhc(0x243e)]);})()",
   },
+  {
+    name: 'remotePlaybackClockA',
+    needle: "iX['WnwNMmWw']+=0x3e8*iM*(0x1+",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1)*(0x1+",
+  },
+  {
+    name: 'remotePlaybackClockA2',
+    needle: "iX[deT(0x2087)]+=0x3e8*iM*(0x1+",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1)*(0x1+",
+  },
+  {
+    name: 'remotePlaybackClockB',
+    needle: "iX['WnwNMmWw']+=0x3e8*iM*1.1",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1)*1.1",
+  },
+  {
+    name: 'remotePlaybackClockB2',
+    needle: "iX[deT(0x2087)]+=0x3e8*iM*1.1",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1)*1.1",
+  },
+  {
+    name: 'remotePlaybackClockC',
+    needle: "iX[deT(0x2087)]+=0x3e8*iM;",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1);",
+  },
+  {
+    name: 'remotePlaybackClockC2',
+    needle: "iX['WnwNMmWw']+=0x3e8*iM;",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1);",
+  },
+  {
+    name: 'remotePlaybackClockRollback',
+    needle: "iX[deT(0x2087)]-=0x3e8*iM,",
+    replacement: "iX[deT(0x2087)]-=0x3e8*iM*(window.__dawnTickMul||1),",
+  },
 ];
 
 // FNV-1a over the needle set → any patch edit auto-invalidates cached bundles.
