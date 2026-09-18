@@ -150,6 +150,8 @@ const settings = ipcRenderer.sendSync("get-settings");
 // object on every change. Reading from it avoids a blocking sendSync
 // round-trip on every call (several pollers paid one per second).
 ipcRenderer.on("settings-updated", (s) => { if (s) Object.assign(settings, s); });
+// Boot-time value for the patched game loop (logic tick overclock).
+window.__dawnTickMul = Math.max(1, Number(settings.logic_tick_rate) / 60) || 1;
 const base_url = settings.base_url;
 
 if (!window.location.href.startsWith(base_url)) {
@@ -6041,6 +6043,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       case "bhop_mult":
         window.__dawnBhopMult = Number(value) || 1.5;
+        break;
+
+      case "logic_tick_rate":
+        // Read by the dawn-patched game loop on every re-schedule (live).
+        window.__dawnTickMul = Math.max(1, Number(value) / 60) || 1;
         break;
 
       case "lobby_ping":

@@ -556,11 +556,16 @@ const PATCHES = [
     needle: "'range','min':'1','max':'3','step':'0.1'",
     replacement: "'range','min':'1','max':'5','step':'0.1'",
   },
-  // Fix 0.5x time scaling and eliminate delta jitter at uncapped FPS: use instantaneous frame-accurate delta
+  // Fix 0.5x time scaling and eliminate delta jitter at uncapped FPS: use instantaneous frame-accurate delta.
+  // window.__dawnTickMul (set from the menu "Logic Tick Rate") divides the
+  // re-schedule interval, overclocking the game's self-scheduling main
+  // loop: 2 = ~120Hz logic, 4 = ~240Hz logic. Default 1 = stock 60Hz.
+  // EXPERIMENTAL: if the world starts moving at 2x speed the tick uses a
+  // fixed dt instead of the measured one — set the rate back to 60.
   {
     name: 'gameLoopDeltaFix',
     needle: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),iL[dhc(0x3918)](0x1/ iM*window[dhc(0x243e)])",
-    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;iL[dhc(0x3918)](_dt*window[dhc(0x243e)]);})()",
+    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;iL[dhc(0x3918)](_dt/(window.__dawnTickMul||1)*window[dhc(0x243e)]);})()",
   },
 ];
 

@@ -117,6 +117,7 @@
     "abbreviation_confirmation": true,
     "num_raster_threads": 6,
     "performance_mode": true,
+    "logic_tick_rate": "60",
     "low_latency": false,
     "use_angle_opengl": false,
     "use_angle_metal": false,

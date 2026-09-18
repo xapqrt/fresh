@@ -53,10 +53,14 @@ function applySwitches() {
   // Opt-in low-latency mode: uncap the compositor. Saves ~2–8ms of
   // frame-present latency on 120/240Hz displays, at the cost of screen
   // tearing on fixed-refresh (non-VRR) panels. Restart required —
-  // switches are read before app ready.
+  // switches are read before app ready. max-gum-fps is the switch that
+  // actually lets Chromium produce frames faster than vsync on macOS
+  // (verified working on M2 Electron for WebGL games); without it the
+  // two flags below are largely no-ops on Apple Silicon.
   if (low_latency) {
     app.commandLine.appendSwitch("disable-gpu-vsync");
     app.commandLine.appendSwitch("disable-frame-rate-limit");
+    app.commandLine.appendSwitch("max-gum-fps", "9999");
   }
 
   app.commandLine.appendSwitch("disable-background-timer-throttling");
