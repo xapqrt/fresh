@@ -856,6 +856,14 @@
             </select>
           </div>
         </div>
+        <div class="option">
+          <span>Interpolation Delay</span>
+          <span class="description">How far behind server time remote players render (ms). Lower = snappier enemies, more jitter-sensitive. Higher = smoother movement, more lag. Default 75ms matches competitive FPS standards.</span>
+          <div class="right">
+            <input type="text" placeholder="75" maxlength="3" class="value interp-delay" data-setting="interp_delay_ms" />
+            <input type="range" min="50" max="200" step="5" class="range interp-delay" data-setting="interp_delay_ms" />
+          </div>
+        </div>
         <div class="option requires-restart">
           <span>Engine Profile</span>
           <span class="description">RESEARCH MODE — A/B compositor configs (see RESEARCH-UNCAP-MACOS.md). stock = verified smooth 60. uncap* = the old client's 500fps flags on modern Chromium — known to be able to wreck presentation on this panel, so measure before believing.</span>

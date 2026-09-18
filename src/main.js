@@ -580,6 +580,11 @@ const PATCHES = [
     replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;iL[dhc(0x3918)](_dt/(window.__dawnTickMul||1)*window[dhc(0x243e)]);})()",
   },
   {
+    name: 'interpDelaySlider',
+    needle: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:0x3,j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];",
+    replacement: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:(window.__dawnInterpDelayMs?Math.max(1,Math.min(j0['length']-1,Math.round(window.__dawnInterpDelayMs/33))):0x3),j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];",
+  },
+  {
     name: 'remotePlaybackClockA',
     needle: "iX['WnwNMmWw']+=0x3e8*iM*(0x1+",
     replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1)*(0x1+",
