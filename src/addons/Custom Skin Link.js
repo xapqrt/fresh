@@ -318,6 +318,7 @@ function startfunction() {
     }
     d_csl_enabled.addEventListener("change", function (event) {
       localStorage.csl_enabled = d_csl_enabled.checked;
+      _syncIsArrayPatch();
       if (localStorage.csl_enabled == "true") {
         fixLocalStorage();
       }
@@ -473,7 +474,12 @@ function getCurrentSkinUrl() {
   return useurl || default_url;
 }
 
-Array.isArray = function (...args) {
+// The skin-swap check rides on Array.isArray (three.js calls it on every
+// material/attribute/buffer). Installing that wrapper unconditionally adds
+// a JS call + 2 property lookups to EVERY Array.isArray call in the game,
+// so the patch is only installed while the feature is actually enabled —
+// zero overhead for everyone with skin link off.
+const _cslIsArray = function (...args) {
   const arg = args[0];
   if (!arg || !arg.map || !arg.map.image) return oldIsArr.apply(Array, args);
 
@@ -501,3 +507,10 @@ Array.isArray = function (...args) {
   }
   return oldIsArr.apply(Array, args);
 };
+
+function _syncIsArrayPatch() {
+  const enabled = localStorage.csl_enabled === "true";
+  if (enabled && Array.isArray !== _cslIsArray) Array.isArray = _cslIsArray;
+  else if (!enabled && Array.isArray === _cslIsArray) Array.isArray = oldIsArr;
+}
+_syncIsArrayPatch();

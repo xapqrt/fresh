@@ -146,6 +146,10 @@ const scriptsPath = ipcRenderer.sendSync("get-scripts-path");
 const scripts = scriptsPath && fs.existsSync(scriptsPath) ? fs.readdirSync(scriptsPath) : [];
 
 const settings = ipcRenderer.sendSync("get-settings");
+// Keep this in-process copy live — main broadcasts the full settings
+// object on every change. Reading from it avoids a blocking sendSync
+// round-trip on every call (several pollers paid one per second).
+ipcRenderer.on("settings-updated", (s) => { if (s) Object.assign(settings, s); });
 const base_url = settings.base_url;
 
 if (!window.location.href.startsWith(base_url)) {
@@ -968,7 +972,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     const updateTheme = (window.updateTheme = () => {
-      const settings = ipcRenderer.sendSync("get-settings");
       const cssLink = settings.css_link;
 
       if (cssLink && settings.css_enabled) {
@@ -993,7 +996,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.head.appendChild(addedStyles);
 
     const updateUIFeatures = () => {
-      const settings = ipcRenderer.sendSync("get-settings");
       const styles = [];
 
       if (settings.perm_tablist)
@@ -2006,14 +2008,13 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     initRoomPresets();
     const applyLobbyChanges = () => {
-      const settings = ipcRenderer.sendSync("get-settings");
 
       lobbyKeybindReminder(settings);
       lobbyNews(settings);
       juiceDiscordButton();
 
       const addLobbyPing = (window.addLobbyPing = () => {
-        if (!ipcRenderer.sendSync("get-settings").lobby_ping) {
+        if (!settings.lobby_ping) {
           document.querySelector(".lobby-ping")?.remove();
           return;
         }
@@ -2033,7 +2034,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const region = regionEl.textContent.trim();
           const ms = await ipcRenderer.invoke("ping-url", `https://${region}.kirka.io`);
 
-          if (!ipcRenderer.sendSync("get-settings").lobby_ping) {
+          if (!settings.lobby_ping) {
             clearInterval(intervalId);
             pingEl.remove();
             running = false;
@@ -2164,7 +2165,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           lobbyNickname.style.gap = "0.25rem";
           lobbyNickname.style.overflow = "unset !important";
 
-          if (ipcRenderer.sendSync("get-settings").animations) window.applyGradientAnimation(lobbyNickname, customs);
+          if (settings.animations) window.applyGradientAnimation(lobbyNickname, customs);
         } else {
           lobbyNickname.style = "display: flex; align-items: flex-end; gap: 0.25rem; overflow: unset !important;";
         }
@@ -2232,7 +2233,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           clan.style.fontWeight = "700";
           clan.style.textShadow = customs.gradient.shadow || "0 0 0 transparent";
 
-          if (ipcRenderer.sendSync("get-settings").animations) window.applyGradientAnimation(clan, customs);
+          if (settings.animations) window.applyGradientAnimation(clan, customs);
         }
       });
 
@@ -2346,7 +2347,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   const handleServers = async () => {
-    const settings = ipcRenderer.sendSync("get-settings");
 
     let mapImages = {};
     try {
@@ -2885,7 +2885,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     input.addEventListener("input", (e) => {
-      const settings = ipcRenderer.sendSync("get-settings");
       if (!settings.command_abbreviations) {
         chatHelper.style.display = "none";
         return;
@@ -2949,7 +2948,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   const handleProfile = () => {
     disconnectObservers();
 
-    const settings = ipcRenderer.sendSync("get-settings");
 
     const getRank = (points) => {
       if (points >= 240) return "Grandmaster";
@@ -3362,7 +3360,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   const handleInGame = () => {
     if (!document.querySelector(".desktop-game-interface")) return;
-    let settings = ipcRenderer.sendSync("get-settings");
     const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
 
     document.addEventListener(
@@ -4952,7 +4949,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   const handleFriends = () => {
-    const settings = ipcRenderer.sendSync("get-settings");
     const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
 
     if (!window.friends) {
@@ -5633,7 +5629,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           subject.addEventListener(
             "click",
             (e) => {
-              if (!ipcRenderer.sendSync("get-settings").prevent_selling_favorites) return;
+              if (!settings.prevent_selling_favorites) return;
               const sellBtn = e.target.closest(".sell-btn");
               if (sellBtn) {
                 e.stopImmediatePropagation();
@@ -5697,7 +5693,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     async function updateInventoryValue() {
-      const settings = ipcRenderer.sendSync("get-settings");
       await loadPriceMap();
 
       let total = 0;
@@ -6005,7 +6000,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
 
   window.test = () => {
-    console.log(ipcRenderer.sendSync("get-settings").chat_height);
+    console.log(settings.chat_height);
   };
 
   ipcRenderer.on("notification", (_, data) => customNotification(data));

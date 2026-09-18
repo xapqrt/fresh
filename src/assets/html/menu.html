@@ -830,11 +830,25 @@
     </div>
     <div id="performance-options" class="juice options">
       <div class="option-group">
+        <div class="option">
+          <span>FPS Cap</span>
+          <span class="description">Pin the page frame rate. Uncapped = display refresh (120Hz on ProMotion, 240Hz on a 240Hz panel).</span>
+          <div class="custom-select">
+            <select id="fps_cap" data-setting="fps_cap">
+              <option value="0">Uncapped</option>
+              <option value="60">60 FPS</option>
+              <option value="120">120 FPS</option>
+              <option value="144">144 FPS</option>
+              <option value="240">240 FPS</option>
+            </select>
+          </div>
+        </div>
         <div class="option requires-restart">
-          <span>Unlimited FPS</span>
+          <span>Low Latency Mode</span>
+          <span class="description">Uncap the compositor for lower input/frame latency on 120/240Hz displays. May cause screen tearing on fixed-refresh (non-VRR) panels.</span>
           <div class="checkbox">
-            <input type="checkbox" id="unlimited_fps" data-setting="unlimited_fps" />
-            <label for="unlimited_fps"></label>
+            <input type="checkbox" id="low_latency" data-setting="low_latency" />
+            <label for="low_latency"></label>
           </div>
         </div>
         <div class="option requires-restart">

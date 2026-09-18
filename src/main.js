@@ -97,12 +97,32 @@ setInterval(() => {
 
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
+
+// FPS cap: webContents.setFrameRate pins the page frame rate (0 = uncapped,
+// which runs at the compositor's natural rate — 120Hz on ProMotion, 240Hz on
+// an external 240Hz panel). Live-updatable: no restart needed.
+const applyFrameCap = () => {
+  if (!gameWindow || gameWindow.isDestroyed()) return;
+  const cap = Number(settings.fps_cap) || 0;
+  try { gameWindow.webContents.setFrameRate(cap); } catch (e) {}
+};
+
+// Settings: in-memory update + renderer broadcast are immediate; the
+// synchronous full-file disk write is debounced so rapid toggles/sliders
+// don't pile up JSON writes.
+let _settingsSaveTimer = null;
 ipcMain.on("update-setting", (e, key, value) => {
+  if (key === "fps_cap") value = Number(value) || 0;
   settings[key] = value;
-  store.set("settings", settings);
+  if (key === "fps_cap") applyFrameCap();
   if (gameWindow && !gameWindow.isDestroyed()) {
     gameWindow.webContents.send("settings-updated", settings);
   }
+  clearTimeout(_settingsSaveTimer);
+  _settingsSaveTimer = setTimeout(() => {
+    _settingsSaveTimer = null;
+    store.set("settings", settings);
+  }, 250);
 });
 ipcMain.handle("dump-cookies", async () => {
   const domains = ['https://kirka.io', 'https://api2.kirka.io', 'https://login.xsolla.com', 'https://accounts.google.com'];
@@ -598,16 +618,36 @@ const patchAndCache = async (targetScriptUrl) => {
 // Warm the bundle cache during splash so the game window's first script
 // request usually hits the cache. This runs in PARALLEL with window creation
 // (never gates it) — a slow fetch must not delay startup.
+//
+// Warm-start shortcut: remember the last seen app.<hash>.js URL. If the
+// bundle for it is already on disk we skip the index-HTML fetch entirely
+// (one less network round-trip per warm launch); if the game shipped a new
+// bundle the URL miss falls through to the live index fetch.
+const _lastBundleUrlFile = () => path.join(_cacheDir(), 'last-bundle-url.txt');
+const _rememberBundleUrl = (url) => {
+  try {
+    fs.mkdirSync(_cacheDir(), { recursive: true });
+    fs.writeFileSync(_lastBundleUrlFile(), url, 'utf-8');
+  } catch (e) {}
+};
 const warmBundleCache = async () => {
   try {
     const base = settings.base_url || 'https://kirka.io/';
+    try {
+      const lastUrl = fs.readFileSync(_lastBundleUrlFile(), 'utf-8').trim();
+      if (lastUrl && _cacheGet(lastUrl)) {
+        console.log('[dawn-patch] warm: cached bundle URL from last run, skipping index fetch');
+        return true;
+      }
+    } catch (e) {}
     const html = await fetchText(base);
     const m = html.match(/assets\/js\/(app\.\w+\.js)/);
     if (!m) { console.warn('[dawn-patch] warm: app bundle URL not found in index page'); return false; }
     // Use m[0] ('assets/js/app.xxx.js') to avoid fetching the HTML fallback at root
     const url = new URL(m[0], base).href;
-    if (_cacheGet(url)) { console.log('[dawn-patch] warm: already cached', m[1]); return true; }
+    if (_cacheGet(url)) { _rememberBundleUrl(url); console.log('[dawn-patch] warm: already cached', m[1]); return true; }
     await patchAndCache(url);
+    _rememberBundleUrl(url);
     return true;
   } catch (err) {
     console.warn('[dawn-patch] warm failed:', err.message);
@@ -730,6 +770,7 @@ const createWindow = () => {
   gameWindow.webContents.once("did-finish-load", () => {
     _failLoadAttempt = 0;
     _perf('game did-finish-load');
+    applyFrameCap();
     try {
       gameWindow.webContents.executeJavaScript(
         'if (performance.memory) console.log("[mem] heap after load:", Math.round(performance.memory.usedJSHeapSize / 1048576) + "MB");'
@@ -740,6 +781,9 @@ const createWindow = () => {
     }
     const _telemetryInterval = setInterval(async () => {
       if (!gameWindow || gameWindow.isDestroyed()) { clearInterval(_telemetryInterval); return; }
+      // Frame telemetry only matters in a match — skip the 2s
+      // executeJavaScript round-trip while sitting in the lobby.
+      if (!_navIsMatch(gameWindow.webContents.getURL())) return;
       try {
         const stats = await gameWindow.webContents.executeJavaScript('window.__dawnTelemetry?.getStats()');
         if (stats && stats.ready) {
@@ -763,8 +807,11 @@ const createWindow = () => {
     }
   });
 
+  let _unresponsiveTimer = null;
   gameWindow.webContents.on("unresponsive", () => {
-    setTimeout(() => {
+    clearTimeout(_unresponsiveTimer);
+    _unresponsiveTimer = setTimeout(() => {
+      _unresponsiveTimer = null;
       try {
         // Never hard-reload mid-match — that's an instant loss. Only recover
         // outside a match; in-game we let the renderer settle or crash-handle.
@@ -775,6 +822,14 @@ const createWindow = () => {
         gameWindow.reload();
       } catch (e) {}
     }, 5000);
+  });
+  // A GC spike or hitch that resolves within 5s must not still trigger
+  // the reload — cancel the pending recovery as soon as it wakes up.
+  gameWindow.webContents.on("responsive", () => {
+    if (_unresponsiveTimer) {
+      clearTimeout(_unresponsiveTimer);
+      _unresponsiveTimer = null;
+    }
   });
 
   gameWindow.webContents.on("did-fail-load", (_, code, desc) => {
@@ -937,6 +992,7 @@ const createWindow = () => {
     }, 10000);
   }
   gameWindow.loadURL(targetUrl);
+  applyFrameCap();
   gameWindow.maximize();
   registerShortcuts(gameWindow);
   if (settings.discord_rpc) {
@@ -1000,13 +1056,16 @@ const matchEnded = () => {
   }, 300);
 };
 
-// ── Renderer memory watchdog ──────────────────────────────────────────────
+// ── Memory watchdog (renderer + GPU process) ───────────────────────────────
 // The game bundle leaks per match (textures/models accumulate); guard against
 // the "fine at first, progressively slower" creep. Nudge GC over the soft
-// limit, hard-reload (only outside a match) over the hard limit.
+// limit, hard-reload (only outside a match) over the hard limit. The GPU
+// process holds the texture memory on macOS — watch it separately so a
+// leak there gets caught too.
 const _MEM_WATCH_MS = 30000;
 const _MEM_SOFT_LIMIT = 2 * 1024 * 1024 * 1024;
 const _MEM_HARD_LIMIT = 3.5 * 1024 * 1024 * 1024;
+const _GPU_HARD_LIMIT = 2.5 * 1024 * 1024 * 1024;
 let _memWatchTimer = null;
 
 const startMemoryWatchdog = () => {
@@ -1015,15 +1074,25 @@ const startMemoryWatchdog = () => {
     try {
       if (!gameWindow || gameWindow.isDestroyed()) return;
       if (gameWindow.webContents.isLoading()) return;
+      const inMatch = _navIsMatch(gameWindow.webContents.getURL());
+
       const info = await gameWindow.webContents.getProcessMemoryInfo();
       const rss = info.privateMemory || info.workingSetSize || 0;
-      const inMatch = _navIsMatch(gameWindow.webContents.getURL());
       if (rss > _MEM_HARD_LIMIT && !inMatch) {
         console.warn(`[mem] renderer RSS ${(rss / 1073741824).toFixed(2)}GB — hard reload`);
         gameWindow.reload();
+        return;
       } else if (rss > _MEM_SOFT_LIMIT && !inMatch) {
         console.warn(`[mem] renderer RSS ${(rss / 1073741824).toFixed(2)}GB — forcing GC`);
         _forceGC();
+      }
+
+      let gpu = null;
+      for (const m of app.getAppMetrics()) if (m.type === "GPU") gpu = m;
+      const gpuRss = gpu?.memory?.workingSetSize || 0;
+      if (gpuRss > _GPU_HARD_LIMIT && !inMatch) {
+        console.warn(`[mem] GPU process RSS ${(gpuRss / 1073741824).toFixed(2)}GB — hard reload`);
+        gameWindow.reload();
       }
     } catch (e) {}
   }, _MEM_WATCH_MS);
@@ -1097,6 +1166,12 @@ app.on("child-process-gone", (_, details) => {
 app.on("before-quit", () => {
   releaseSyntheticKeys();
   globalShortcut.unregisterAll();
+  // Flush any debounced settings write so the last change isn't lost.
+  if (_settingsSaveTimer) {
+    clearTimeout(_settingsSaveTimer);
+    _settingsSaveTimer = null;
+    store.set("settings", settings);
+  }
 });
 
 app.on("window-all-closed", () => app.quit());

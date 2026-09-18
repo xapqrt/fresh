@@ -42,19 +42,36 @@ function applySwitches() {
 
   app.commandLine.appendSwitch("disable-gpu-process-crash-limit");
 
+  // Safe GPU-path flags (vetted for Electron 32 / Apple Silicon — see
+  // full-performance-review.md §1.2). Unknown switches are ignored by
+  // Chromium, so these are no-ops worst case.
+  app.commandLine.appendSwitch("enable-zero-copy");
+  app.commandLine.appendSwitch("enable-gpu-rasterization");
+  // Kill P3→sRGB color-space conversion overhead on Apple displays.
+  app.commandLine.appendSwitch("force-color-profile", "srgb");
+
+  // Opt-in low-latency mode: uncap the compositor. Saves ~2–8ms of
+  // frame-present latency on 120/240Hz displays, at the cost of screen
+  // tearing on fixed-refresh (non-VRR) panels. Restart required —
+  // switches are read before app ready.
+  if (low_latency) {
+    app.commandLine.appendSwitch("disable-gpu-vsync");
+    app.commandLine.appendSwitch("disable-frame-rate-limit");
+  }
+
   app.commandLine.appendSwitch("disable-background-timer-throttling");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
   app.commandLine.appendSwitch("enable-features", "ParallelDownloading");
   app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,TrackingPrevention,ThirdPartyStoragePartitioning,Tpcd,TpcdMitigations");
+    "CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,PaintHolding,OptimizationHints,TrackingPrevention,ThirdPartyStoragePartitioning,Tpcd,TpcdMitigations");
 
   app.commandLine.appendSwitch("disable-blink-features",
     "ThirdPartyStoragePartitioning,TrustedTypes");
 
   app.commandLine.appendSwitch("v8-cache-options", "code");
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --sparkplug --turbo-fast-api-calls --expose-gc");
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=128 --sparkplug --turbo-fast-api-calls --expose-gc");
 
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");
