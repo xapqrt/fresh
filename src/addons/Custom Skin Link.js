@@ -7,10 +7,8 @@
 // ==/UserScript==
 
 //Runs on the original BKC custom skin link feature (made by infi and boden)
-let localStoragekey1 =
-  "SETTINGS___SETTING/PLAYERS___SETTING/RENDER_TEXTURE___SETTING";
-let localStoragekey2 =
-  "SETTINGS___SETTING/PLAYERS___SETTING/RENDER_COLOR___SETTING";
+let localStoragekey1 = "SETTINGS___SETTING/PLAYERS___SETTING/RENDER_TEXTURE___SETTING";
+let localStoragekey2 = "SETTINGS___SETTING/PLAYERS___SETTING/RENDER_COLOR___SETTING";
 
 //HTML stuff
 let option_group = document.createElement("div");
@@ -38,18 +36,15 @@ colorpicker_output.id = "colorpicker_output";
 colorpicker_output.readOnly = true;
 let csl_enabled = document.createElement("div");
 csl_enabled.className = "option";
-csl_enabled.innerHTML =
-  '<div class="left"><span>Enabled</span></div><div class="checkbox"><input type="checkbox" id="csl_enabled"><label for="csl_enabled"></label></div>';
+csl_enabled.innerHTML = '<div class="left"><span>Enabled</span></div><div class="checkbox"><input type="checkbox" id="csl_enabled"><label for="csl_enabled"></label></div>';
 let csl_ingame_only = document.createElement("div");
 csl_ingame_only.className = "option";
-csl_ingame_only.innerHTML =
-  '<div class="left"><span>Only swap ingame</span></div><div class="checkbox"><input type="checkbox" id="csl_ingame_only"><label for="csl_ingame_only"></label></div>';
+csl_ingame_only.innerHTML = '<div class="left"><span>Only swap ingame</span></div><div class="checkbox"><input type="checkbox" id="csl_ingame_only"><label for="csl_ingame_only"></label></div>';
 let output_container = document.createElement("div");
 output_container.className = "option";
 let csl_url_or_base64 = document.createElement("div");
 csl_url_or_base64.className = "checkbox";
-csl_url_or_base64.innerHTML =
-  '<div class="checkbox"><input type="checkbox" id="csl_url_or_base64"><label for="csl_url_or_base64"></label></div>';
+csl_url_or_base64.innerHTML = '<div class="checkbox"><input type="checkbox" id="csl_url_or_base64"><label for="csl_url_or_base64"></label></div>';
 let csl_colorpicker_inputurl = document.createElement("input");
 csl_colorpicker_inputurl.type = "text";
 csl_colorpicker_inputurl.id = "csl_colorpicker_inputurl";
@@ -241,11 +236,9 @@ function displayNewImage(src) {
 function handleHighlight() {
   if (localStorage.csl_url_or_base64 == "true") {
     document.getElementById("colorpicker_output").className = "";
-    document.getElementById("csl_colorpicker_inputurl").className =
-      "highlight_textarea";
+    document.getElementById("csl_colorpicker_inputurl").className = "highlight_textarea";
   } else {
-    document.getElementById("colorpicker_output").className =
-      "highlight_textarea";
+    document.getElementById("colorpicker_output").className = "highlight_textarea";
     document.getElementById("csl_colorpicker_inputurl").className = "";
   }
 }
@@ -272,9 +265,7 @@ function startfunction() {
       }
       handleHighlight();
     });
-    let csl_colorpicker_inputurl = document.getElementById(
-      "csl_colorpicker_inputurl",
-    );
+    let csl_colorpicker_inputurl = document.getElementById("csl_colorpicker_inputurl");
     if (localStorage.csl_colorpicker_inputurl != undefined) {
       csl_colorpicker_inputurl.value = localStorage.csl_colorpicker_inputurl;
     }
@@ -327,7 +318,6 @@ function startfunction() {
     }
     d_csl_enabled.addEventListener("change", function (event) {
       localStorage.csl_enabled = d_csl_enabled.checked;
-      _syncCslPatch();
       if (localStorage.csl_enabled == "true") {
         fixLocalStorage();
       }
@@ -470,119 +460,44 @@ const oldIsArr = Array.isArray;
 const muzzleImg = "https://kirka.io/assets/img/__shooting-fire__.effa20af.png";
 const muzzleImg2 = "shooting-fire";
 
-// WeakMap so patched textures don't accumulate forever — the game creates new
-// texture objects every match, and a strong Map used to retain them all,
-// causing unbounded renderer memory growth (progressive slowdown).
-const _patchMeta = new WeakMap();
+let patchedTextures = new Map();
 
 function getCurrentSkinUrl() {
   if (localStorage.csl_enabled !== "true") return null;
-  return (localStorage.csl_url_or_base64 === "true"
-    ? localStorage.csl_colorpicker_inputurl
-    : localStorage.csl_url) || default_url;
+  let useurl;
+  if (localStorage.csl_url_or_base64 === "true") {
+    useurl = localStorage.csl_colorpicker_inputurl;
+  } else {
+    useurl = localStorage.csl_url;
+  }
+  return useurl || default_url;
 }
 
-let _lastIngameCheck = 0;
-let _ingameCached = false;
-const _isIngame = () => {
-  // Cache the TRUE value briefly (in-match = hot path). A stale FALSE would
-  // make freshly-spawned players/bots miss the patch at match start, so the
-  // false->true flip is always re-checked fresh.
-  if (_ingameCached) {
-    if (performance.now() - _lastIngameCheck < 500) return true;
-    _ingameCached = false;
-  }
-  _ingameCached = !!document.querySelector(".desktop-game-interface");
-  _lastIngameCheck = performance.now();
-  return _ingameCached;
-};
-
-// The game can upload the texture's current (still original) bitmap to the GPU
-// before the custom image finishes loading — that's why skins show up
-// "sometimes". Force a re-upload once the new source actually decodes.
-const _pendingReuploads = new WeakSet();
-const _forceReuploadAfterLoad = (image, texture) => {
-  if (image.complete || _pendingReuploads.has(image)) return;
-  _pendingReuploads.add(image);
-  const onLoad = () => {
-    _pendingReuploads.delete(image);
-    image.removeEventListener("load", onLoad);
-    texture.needsUpdate = true;
-  };
-  image.addEventListener("load", onLoad);
-};
-
-// The wrapper replaces the global Array.isArray, which the game (three.js) calls
-// constantly for materials/attributes/buffers. Leaving it installed while the
-// feature is disabled adds a JS call + property lookups to every invocation for
-// zero benefit — so install it only while csl_enabled is true.
-let _cslPatchInstalled = false;
-const _cslIsArrayWrapper = function(arg) {
-  if (!arg || !arg.map || !arg.map.image) return oldIsArr.call(Array, arg);
-
-  const image = arg.map.image;
-  const w = image.width;
-  if (w !== 64 && w !== 42) return oldIsArr.call(Array, arg);
-  const h = image.height;
-  if (h !== 64 && h !== 42 && h !== 32) return oldIsArr.call(Array, arg);
-  if (image.src === muzzleImg || image.src.includes(muzzleImg2)) return oldIsArr.call(Array, arg);
-
-  // No custom skin configured — bail before doing any DOM work.
-  const customSkinLink = getCurrentSkinUrl();
-  if (!customSkinLink) return oldIsArr.call(Array, arg);
-
-  // Never overwrite map/block/world textures or skyboxes
-  const mapTexUrl = localStorage.getItem("SETTINGS___SETTING/BLOCKS___SETTING/TEXTURE_URL___SETTING");
-  if (mapTexUrl && (image.src === mapTexUrl || customSkinLink === mapTexUrl)) {
-    return oldIsArr.call(Array, arg);
-  }
-  if (typeof image.src === "string" && (
-    /texture-blocks|Grass|Earth|Stone|Sand|Mud|Wood|Metal|block|map|terrain|atlas|skybox|env/i.test(image.src)
-  )) {
-    return oldIsArr.call(Array, arg);
-  }
-
-  const ingameOnly = localStorage.csl_ingame_only !== "false";
-  const canSwap = ingameOnly ? _isIngame() : true;
+Array.isArray = function (...args) {
+  const arg = args[0];
+  if (!arg || !arg.map || !arg.map.image) return oldIsArr.apply(Array, args);
 
   const texture = arg.map;
-  // Bookkeeping keyed on the IMAGE (survives texture object reuse), and
-  // re-patching is throttled — re-applying the skin on every frame the game
-  // touches a texture source used to churn image loads + GPU uploads.
-  const meta = _patchMeta.get(image);
+  const image = texture.image;
+  const width = image.width;
+  const height = image.height;
 
-  if (canSwap) {
-    if (!meta) {
-      _patchMeta.set(image, { originalSrc: image.src, lastPatchAt: performance.now() });
+  const customSkinLink = getCurrentSkinUrl();
+  const isSkinTexture = (width === 128 || width === 64 || width === 42) && (height === 128 || height === 64 || height === 42 || height === 32);
+  const ingame = !!document.querySelector(".desktop-game-interface");
+  const ingameOnly = localStorage.csl_ingame_only !== "false";
+  const canSwap = ingameOnly ? ingame : true;
+
+  if (isSkinTexture && image.src !== muzzleImg && !image.src.includes(muzzleImg2)) {
+    if (canSwap && customSkinLink && !patchedTextures.has(texture)) {
+      patchedTextures.set(texture, image.src);
       image.src = customSkinLink;
       texture.needsUpdate = true;
-      _forceReuploadAfterLoad(image, texture);
-    } else if (image.src !== customSkinLink && performance.now() - meta.lastPatchAt > 250) {
-      // The game reset the source (new match / respawn) — re-apply, throttled.
-      meta.lastPatchAt = performance.now();
-      image.src = customSkinLink;
+    } else if (!canSwap && patchedTextures.has(texture)) {
+      image.src = patchedTextures.get(texture);
+      patchedTextures.delete(texture);
       texture.needsUpdate = true;
-      _forceReuploadAfterLoad(image, texture);
     }
-  } else if (meta && image.src === customSkinLink) {
-    image.src = meta.originalSrc;
-    texture.needsUpdate = true;
-    _forceReuploadAfterLoad(image, texture);
-    _patchMeta.delete(image);
   }
-
-  return oldIsArr.call(Array, arg);
+  return oldIsArr.apply(Array, args);
 };
-
-const _syncCslPatch = () => {
-  const enabled = localStorage.csl_enabled === "true";
-  if (enabled === _cslPatchInstalled) return;
-  _cslPatchInstalled = enabled;
-  Array.isArray = enabled ? _cslIsArrayWrapper : oldIsArr;
-};
-
-// Install/uninstall only while enabled — zero Array.isArray overhead for users
-// who never touch this feature. Note: uninstalling mid-session does NOT roll
-// back textures already swapped (WeakMap isn't iterable) — they reset when the
-// game regenerates textures next match, which is exactly the leak-free path.
-try { _syncCslPatch(); } catch (e) { Array.isArray = oldIsArr; }

@@ -310,8 +310,9 @@ const hookWebGL = () => {
     const isGameCanvas =
       this.id === 'game' || this.id === 'gameCanvas' ||
       (!_gameContext && (type === 'webgl' || type === 'webgl2') && this.width > 100 && this.height > 100);
-    const merged = isGameCanvas ? Object.assign({ desynchronized: true }, attrs) : attrs;
-    const ctx = origGetCtx.call(this, type, merged);
+    // On macOS with ANGLE Metal, desynchronized: true causes severe compositor stutter
+    // and lock contention with WindowServer. Keep standard buffered presentation.
+    const ctx = origGetCtx.call(this, type, attrs);
     if (!ctx || (type !== 'webgl' && type !== 'webgl2')) return ctx;
     if (!isGameCanvas || _gameContext) return ctx;
 

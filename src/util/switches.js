@@ -25,6 +25,7 @@ function applySwitches() {
   app.commandLine.appendSwitch("user-agent",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
 
+
   if (num_raster_threads !== null && num_raster_threads > 0) {
     app.commandLine.appendSwitch("num-raster-threads",
       String(Math.min(Math.max(num_raster_threads | 0, 1), 8)));
@@ -45,16 +46,15 @@ function applySwitches() {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 
-  app.commandLine.appendSwitch("enable-features",
-    "ParallelDownloading,CanvasOopRasterization");
+  app.commandLine.appendSwitch("enable-features", "ParallelDownloading");
   app.commandLine.appendSwitch("disable-features",
-    "CalculateNativeWinOcclusion,PaintHolding,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,TrackingPrevention,ThirdPartyStoragePartitioning,Tpcd,TpcdMitigations");
+    "CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,TrackingPrevention,ThirdPartyStoragePartitioning,Tpcd,TpcdMitigations");
 
   app.commandLine.appendSwitch("disable-blink-features",
     "ThirdPartyStoragePartitioning,TrustedTypes");
 
   app.commandLine.appendSwitch("v8-cache-options", "code");
-  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --max-semi-space-size=128 --sparkplug --turbo-fast-api-calls --expose-gc");
+  app.commandLine.appendSwitch("js-flags", "--max-old-space-size=4096 --sparkplug --turbo-fast-api-calls --expose-gc");
 
   app.commandLine.appendSwitch("audio-output-sample-rate", "48000");
   app.commandLine.appendSwitch("audio-buffer-size", "512");

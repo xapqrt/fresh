@@ -1,10 +1,21 @@
-const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut } = require("electron");
+const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net } = require("electron");
 const { applySwitches } = require("./util/switches");
 const { default_settings, allowed_urls } = require("./util/defaults.json");
+const { registerShortcuts } = require("./util/shortcuts");
+const DiscordRPC = require("./addons/rpc");
 const path = require("path");
 const os = require("os");
 const Store = require("electron-store");
 const fs = require("fs");
+const ffmpeg = require("fluent-ffmpeg");
+let ffmpegPath = require("ffmpeg-static");
+
+if (ffmpegPath && ffmpegPath.includes("app.asar")) {
+  ffmpegPath = ffmpegPath.replace("app.asar", "app.asar.unpacked");
+}
+if (ffmpegPath) {
+  ffmpeg.setFfmpegPath(ffmpegPath);
+}
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "dawn-patch", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, standard: true, corsEnabled: true } },
@@ -22,6 +33,12 @@ for (const key in default_settings) {
   if (!(key in settings) || typeof settings[key] !== typeof default_settings[key]) {
     settings[key] = default_settings[key];
   }
+}
+if (!settings.menu_opacity || Number(settings.menu_opacity) <= 0) {
+  settings.menu_opacity = 100;
+}
+if (settings.advanced_css && (settings.advanced_css.includes("263f8a2cbfc9d6e90f37e32f88d3265d") || settings.advanced_css.includes("rick and morty"))) {
+  settings.advanced_css = "";
 }
 store.set("settings", settings);
 
@@ -83,9 +100,6 @@ ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
 ipcMain.on("update-setting", (e, key, value) => {
   settings[key] = value;
   store.set("settings", settings);
-  if (key === "fps_cap" && gameWindow && !gameWindow.isDestroyed()) {
-    applyFrameCap(gameWindow, value);
-  }
   if (gameWindow && !gameWindow.isDestroyed()) {
     gameWindow.webContents.send("settings-updated", settings);
   }
@@ -120,6 +134,275 @@ ipcMain.on("bhop-keys", (_, events) => {
   }
 });
 
+// ── Upstream Dawn Client IPC Handlers ─────────────────────────────────────
+ipcMain.handle("ping-url", async (_event, url) => {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const request = net.request({ method: "HEAD", url });
+    request.on("response", () => done(Date.now() - start));
+    request.on("error", () => done(null));
+    setTimeout(() => {
+      try { request.abort(); } catch {}
+      done(null);
+    }, 3000);
+    request.end();
+  });
+});
+
+ipcMain.on("open-swapper-folder", () => {
+  const swapperPath = path.join(app.getPath("documents"), "DawnClient/swapper/assets");
+  if (!fs.existsSync(swapperPath)) fs.mkdirSync(swapperPath, { recursive: true });
+  shell.openPath(swapperPath);
+});
+
+const scriptsPath = path.join(app.getPath("documents"), "DawnClient/scripts");
+if (!fs.existsSync(scriptsPath)) fs.mkdirSync(scriptsPath, { recursive: true });
+
+ipcMain.on("open-scripts-folder", () => {
+  shell.openPath(scriptsPath);
+});
+
+ipcMain.on("get-scripts-path", (e) => {
+  e.returnValue = scriptsPath;
+});
+
+ipcMain.on("open-skins-folder", () => {
+  const skinsPath = path.join(app.getPath("documents"), "DawnClient/swapper/assets/img");
+  if (!fs.existsSync(skinsPath)) fs.mkdirSync(skinsPath, { recursive: true });
+  shell.openPath(skinsPath);
+});
+
+ipcMain.on("get-sounds-path", (e) => {
+  const soundsPath = path.join(app.getPath("documents"), "DawnClient/swapper/assets/media");
+  if (!fs.existsSync(soundsPath)) fs.mkdirSync(soundsPath, { recursive: true });
+  e.returnValue = soundsPath;
+});
+
+ipcMain.on("open-sounds-folder", () => {
+  const soundsPath = path.join(app.getPath("documents"), "DawnClient/swapper/assets/media");
+  if (!fs.existsSync(soundsPath)) fs.mkdirSync(soundsPath, { recursive: true });
+  shell.openPath(soundsPath);
+});
+
+ipcMain.on("open-gallery-folder", () => {
+  const galleryFolder = path.join(app.getPath("documents"), "DawnClient/gallery");
+  if (!fs.existsSync(galleryFolder)) fs.mkdirSync(galleryFolder, { recursive: true });
+  shell.openPath(galleryFolder);
+});
+
+const galleryFolder = path.join(app.getPath("documents"), "DawnClient/gallery");
+if (!fs.existsSync(galleryFolder)) fs.mkdirSync(galleryFolder, { recursive: true });
+
+ipcMain.handle("get-file-preview", (event, filePath) => {
+  const ext = filePath.split(".").pop().toLowerCase();
+  const mimeTypes = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+  };
+  const mime = mimeTypes[ext] || "image/png";
+  const data = fs.readFileSync(filePath);
+  return `data:${mime};base64,${data.toString("base64")}`;
+});
+
+ipcMain.handle("get-gallery-root", () => galleryFolder);
+
+function copyRecursiveSync(src, dest) {
+  const stat = fs.statSync(src);
+  if (stat.isDirectory()) {
+    if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src);
+    for (const entry of entries) copyRecursiveSync(path.join(src, entry), path.join(dest, entry));
+  } else {
+    fs.copyFileSync(src, dest);
+  }
+}
+
+try {
+  fs.watch(galleryFolder, (eventType, filename) => {
+    if (filename) BrowserWindow.getAllWindows().forEach((win) => win.webContents.send("gallery-updated"));
+  });
+} catch (e) {}
+
+ipcMain.on("open-category-folder", (event, folderPath) => {
+  try {
+    if (fs.existsSync(folderPath)) shell.openPath(folderPath);
+  } catch (err) { console.error(err); }
+});
+
+ipcMain.on("open-import", async (event, categoryPath) => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: "Select file to import",
+    defaultPath: categoryPath,
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "All Supported",
+        extensions: ["txt", "json", "css", "png", "jpg", "jpeg", "gif", "webp"],
+      },
+    ],
+  });
+  if (!canceled && filePaths.length > 0) {
+    const filePath = filePaths[0];
+    fs.copyFileSync(filePath, path.join(categoryPath, path.basename(filePath)));
+    event.sender.send("gallery-updated");
+  }
+});
+
+ipcMain.on("import-file", (event, categoryPath, filePath) => {
+  try {
+    if (!fs.statSync(filePath).isFile()) return;
+    const fileName = path.basename(filePath);
+    const targetPath = path.join(categoryPath, fileName);
+    const targetDir = path.dirname(targetPath);
+    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+    fs.copyFileSync(filePath, targetPath);
+    event.reply("gallery-updated");
+  } catch (err) { console.error(err); }
+});
+
+ipcMain.on("delete-file", (event, filePath) => {
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  event.reply("gallery-updated");
+});
+
+ipcMain.on("rename-file", (event, oldPath, newName) => {
+  const newPath = path.join(path.dirname(oldPath), newName);
+  if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath);
+  event.reply("gallery-updated");
+});
+
+ipcMain.on("copy-image-path", (event, imgPath) => {
+  if (fs.existsSync(imgPath)) {
+    clipboard.writeText(imgPath);
+    event.sender.send("image-path-copied");
+  }
+});
+
+ipcMain.on("copy-file-content", (event, filePath) => {
+  if (fs.existsSync(filePath)) {
+    try {
+      const content = fs.readFileSync(filePath, "utf-8");
+      clipboard.writeText(content);
+      event.sender.send("file-content-copied");
+    } catch (err) { console.error(err); }
+  }
+});
+
+ipcMain.on("get-gallery", (event) => {
+  const categories = [];
+  const subfolders = fs
+    .readdirSync(galleryFolder, { withFileTypes: true })
+    .filter((dirent) => dirent.isDirectory())
+    .map((dirent) => dirent.name);
+  const rootFiles = fs.readdirSync(galleryFolder).filter((f) => fs.statSync(path.join(galleryFolder, f)).isFile());
+
+  if (rootFiles.length) {
+    categories.push({
+      name: "Root",
+      path: galleryFolder,
+      files: rootFiles.map((f) => ({
+        name: f,
+        path: path.join(galleryFolder, f),
+      })),
+    });
+  }
+
+  for (const folder of subfolders) {
+    const folderPath = path.join(galleryFolder, folder);
+    const files = fs
+      .readdirSync(folderPath)
+      .filter((f) => fs.statSync(path.join(folderPath, f)).isFile())
+      .map((f) => ({ name: f, path: path.join(folderPath, f) }));
+    categories.push({ name: folder, path: folderPath, files });
+  }
+
+  event.sender.send("gallery-list", categories);
+});
+
+ipcMain.on("open-file", (event, filePath) => {
+  if (fs.existsSync(filePath)) shell.openPath(filePath);
+});
+
+ipcMain.on("import-folder-recursive", (event, folderPath) => {
+  try {
+    const dest = path.join(galleryFolder, path.basename(folderPath));
+    if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+    copyRecursiveSync(folderPath, dest);
+    event.reply("gallery-updated");
+  } catch (err) {
+    event.reply("import-folder-error", err.toString());
+  }
+});
+
+const quickCssPath = path.join(app.getPath("documents"), "DawnClient", "quickcss.css");
+if (!fs.existsSync(quickCssPath)) {
+  try {
+    fs.mkdirSync(path.dirname(quickCssPath), { recursive: true });
+    fs.writeFileSync(quickCssPath, "", "utf8");
+  } catch (e) {}
+}
+
+ipcMain.on("get-quickcss-path", (e) => {
+  e.returnValue = quickCssPath;
+});
+
+ipcMain.on("reset-juice-settings", () => {
+  store.set("settings", default_settings);
+  try { fs.writeFileSync(quickCssPath, "", "utf8"); } catch (e) {}
+  app.relaunch();
+  app.quit();
+});
+
+ipcMain.on("save-skin-local", (event, skinname, filePath) => {
+  const skinsFolder = path.join(app.getPath("documents"), "DawnClient/swapper/assets/img");
+  if (!fs.existsSync(skinsFolder)) fs.mkdirSync(skinsFolder, { recursive: true });
+  const fileBuffer = fs.readFileSync(filePath);
+  fs.writeFileSync(path.join(skinsFolder, skinname), fileBuffer);
+});
+
+ipcMain.on("save-skin-from-buffer", (event, skinname, buffer) => {
+  const skinsFolder = path.join(app.getPath("documents"), "DawnClient/swapper/assets/img");
+  if (!fs.existsSync(skinsFolder)) fs.mkdirSync(skinsFolder, { recursive: true });
+  fs.writeFileSync(path.join(skinsFolder, skinname), buffer);
+});
+
+ipcMain.on("save-sound", (event, soundname, filePath, volume) => {
+  try {
+    const soundsFolder = path.join(app.getPath("documents"), "DawnClient/swapper/assets/media");
+    if (!fs.existsSync(soundsFolder)) fs.mkdirSync(soundsFolder, { recursive: true });
+    const inputPath = path.resolve(filePath);
+    const savePath = path.join(soundsFolder, soundname);
+
+    ffmpeg(inputPath)
+      .setFfmpegPath(ffmpegPath)
+      .audioFilters(`volume=${volume}`)
+      .output(savePath)
+      .on("end", () => event.reply("save-sound-success"))
+      .on("error", (err) => {
+        console.error("FFmpeg error:", err);
+        event.reply("save-sound-error", err.message);
+      })
+      .run();
+  } catch (err) {
+    event.reply("save-sound-error", err.message);
+  }
+});
+
+ipcMain.on("navigate", (_, url) => {
+  if (gameWindow && !gameWindow.isDestroyed()) {
+    gameWindow.loadURL(url);
+  }
+});
+
 // Bundle cache: memory + disk (keyed by URL filename, e.g. app.abc123.js)
 // P0-1: filename is version-suffixed so any patch change invalidates old
 // entries; stale entries are pruned at startup (see pruneBundleCache).
@@ -144,7 +427,15 @@ const _cacheGet = (key) => {
   if (_bundleCache.has(key)) return _bundleCache.get(key);
   try {
     const f = path.join(_cacheDir(), _cacheKey(key));
-    if (fs.existsSync(f)) { const d = fs.readFileSync(f, 'utf-8'); _bundleCache.set(key, d); return d; }
+    if (fs.existsSync(f)) {
+      const d = fs.readFileSync(f, 'utf-8');
+      if (d.trim().startsWith('<')) {
+        try { fs.unlinkSync(f); } catch (e) {}
+        return null;
+      }
+      _bundleCache.set(key, d);
+      return d;
+    }
   } catch (e) {}
   return null;
 };
@@ -154,11 +445,9 @@ const _cacheSet = (key, data) => {
     const d = _cacheDir();
     fs.mkdirSync(d, { recursive: true });
     const f = path.join(d, _cacheKey(key));
-    // Atomic: write tmp then rename, so a crash mid-write can never leave a
-    // truncated bundle that gets served to the game on the next launch.
-    fs.writeFile(f + '.tmp', data, 'utf-8', () => {
-      try { fs.rename(f + '.tmp', f); } catch (e) {}
-    });
+    // Atomic: write tmp then renameSync so cached bundle is immediately accessible
+    fs.writeFileSync(f + '.tmp', data, 'utf-8');
+    fs.renameSync(f + '.tmp', f);
   } catch (e) {}
 };
 let _patchProtocolRegistered = false;
@@ -189,17 +478,19 @@ const initResourceSwapper = () => {
     normMap[clean] = full;
   };
 
-  if (require("fs").existsSync(customDir)) {
-    const walk = (dir) => {
-      for (const file of require("fs").readdirSync(dir)) {
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    try {
+      for (const file of fs.readdirSync(dir)) {
         const full = path.join(dir, file);
-        const stat = require("fs").statSync(full);
+        const stat = fs.statSync(full);
         if (stat.isDirectory()) walk(full);
         else registerFile(full);
       }
-    };
-    walk(customDir);
-  }
+    } catch (e) {}
+  };
+  walk(customDir);
+  walk(path.join(app.getPath("documents"), "DawnClient", "swapper", "assets"));
 
   // dawnclient://<absolute-file-path> → serve that file straight from disk.
   protocol.handle("dawnclient", (request) => {
@@ -221,20 +512,35 @@ const initResourceSwapper = () => {
 // unique in the current bundle (see bundle-research-report.md); a needle that
 // stops matching is reported in __patchMeta.missing instead of crashing.
 const PATCHES = [
+  // onGround hook for current bundle app.c2fce18f.js
   {
     name: 'onGround',
+    needle: "iP[d7c(0x3ab6)]=iP[d7c(0x52a9)],iP[d7c(0x52a9)]=this[d7c(0x52a9)]",
+    replacement: "iP[d7c(0x3ab6)]=iP[d7c(0x52a9)],iP[d7c(0x52a9)]=window.__onGround=!!this[d7c(0x52a9)]",
+  },
+  // onGround hook fallback for older bundle app.662a34fb.js
+  {
+    name: 'onGroundLegacy',
     needle: "iP[da8(0x3d56)]=iP[da8(0x55bf)],iP[da8(0x55bf)]=this[da8(0x55bf)]",
     replacement: "iP[da8(0x3d56)]=iP[da8(0x55bf)],iP[da8(0x55bf)]=window.__onGround=!!this[da8(0x55bf)]",
   },
+  // bhop multiplier hook for current bundle app.c2fce18f.js
   {
-    name: 'antiSpam',
-    needle: "this[bWR(0x6627)]=0x1",
-    replacement: "window.__antiSpam=(this[bWR(0x6627)]=0x1)",
+    name: 'bhopMult',
+    needle: "var iV=d73(0x365f)===typeof iT['wWMnwNWm']?iT[d73(0x528b)]:1.5;",
+    replacement: "var iV='number'===typeof window.__dawnBhopMult?window.__dawnBhopMult:(d73(0x365f)===typeof iT['wWMnwNWm']?iT[d73(0x528b)]:1.5);",
   },
+  // bhop slider expansion for current bundle app.c2fce18f.js
   {
-    name: 'antiSpamClear',
-    needle: "this['wNWmWwM']=!0x1",
-    replacement: "window.__antiSpam=(this['wNWmWwM']=!0x1)",
+    name: 'bhopSlider',
+    needle: "'range','min':'1','max':'3','step':'0.1'",
+    replacement: "'range','min':'1','max':'5','step':'0.1'",
+  },
+  // Fix 0.5x time scaling and eliminate delta jitter at uncapped FPS: use instantaneous frame-accurate delta
+  {
+    name: 'gameLoopDeltaFix',
+    needle: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),iL[dhc(0x3918)](0x1/ iM*window[dhc(0x243e)])",
+    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;iL[dhc(0x3918)](_dt*window[dhc(0x243e)]);})()",
   },
 ];
 
@@ -272,6 +578,9 @@ const patchAndCache = async (targetScriptUrl) => {
   const p = (async () => {
     const t0 = Date.now();
     let code = await fetchText(targetScriptUrl);
+    if (!code || code.trim().startsWith('<')) {
+      throw new Error(`Invalid JS response (HTML) for ${targetScriptUrl}`);
+    }
     const { code: patched, meta } = applyPatches(code);
     const finalCode = patched + `\n//# sourceURL=${targetScriptUrl}` + `\nwindow.__patchMeta = ${JSON.stringify(meta)};`;
     _cacheSet(targetScriptUrl, finalCode);
@@ -295,7 +604,8 @@ const warmBundleCache = async () => {
     const html = await fetchText(base);
     const m = html.match(/assets\/js\/(app\.\w+\.js)/);
     if (!m) { console.warn('[dawn-patch] warm: app bundle URL not found in index page'); return false; }
-    const url = new URL(m[1], base).href;
+    // Use m[0] ('assets/js/app.xxx.js') to avoid fetching the HTML fallback at root
+    const url = new URL(m[0], base).href;
     if (_cacheGet(url)) { console.log('[dawn-patch] warm: already cached', m[1]); return true; }
     await patchAndCache(url);
     return true;
@@ -344,41 +654,38 @@ const initPatchProtocol = () => {
 
 const createSplashWindow = () => {
   splashWindow = new BrowserWindow({
-    width: 400,
-    height: 300,
+    icon: path.join(__dirname, "assets/img/icon.png"),
+    width: 500,
+    height: 500,
     frame: false,
-    backgroundColor: "#07070a",
-    resizable: false,
+    transparent: true,
     alwaysOnTop: true,
-    center: true,
+    resizable: false,
     show: false,
     webPreferences: {
-      preload: SPLASH_PRELOAD,
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: false,
+      nodeIntegration: true,
+      contextIsolation: false,
+      preload: path.join(__dirname, "preload/splash.js"),
     },
   });
 
-  splashWindow.loadFile(path.join(__dirname, "..", "assets", "splash.html"));
+  splashWindow.loadFile(path.join(__dirname, "assets/html/splash.html"));
   splashWindow.once("ready-to-show", () => {
     splashWindow.show();
-    splashWindow.webContents.send("splash-show");
+    splashWindow.webContents.send("splash-ready");
   });
 
-  splashWindow.on("closed", () => { splashWindow = null; });
+  splashWindow.on("closed", () => {
+    ipcMain.removeAllListeners("quit-and-install");
+    splashWindow = null;
+  });
 };
 
-// fps_cap setting → live frame-rate limit on the game contents.
-const applyFrameCap = (win, fps) => {
-  if (!win || win.isDestroyed()) return;
-  try {
-    // Clamp supports high-refresh displays (360/540Hz) — Chromium tops out at
-    // ~1000fps; the effective rate is still bounded by the display.
-    const cap = Math.min(Math.max(Number(fps) || 240, 30), 1000);
-    win.webContents.setFrameRate(cap);
-  } catch (e) {}
-};
+ipcMain.on("check-for-updates", () => {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send("update-not-available");
+  }
+});
 
 const createWindow = () => {
   gameWindow = new BrowserWindow({
@@ -391,21 +698,21 @@ const createWindow = () => {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: PRELOAD_PATH,
-      nodeIntegration: false,
+      nodeIntegration: true,
+      webviewTag: true,
       contextIsolation: false,
       sandbox: false,
       webSecurity: false,
-      pointerLockV2: true,
+      disablePointerLockWait: true,
       scrollBounce: false,
       pinchZoom: false,
       experimentalFeatures: false,
       backgroundThrottling: false,
       spellcheck: false,
       enableWebSQL: false,
-      enableBlinkFeatures: 'PointerLockV2,PointerRawUpdate',
+      enableBlinkFeatures: 'PointerLockV2',
     },
     backgroundColor: "#141414",
-    paintWhenInitiallyHidden: true,
   });
 
   gameWindow.once("ready-to-show", () => {
@@ -431,6 +738,15 @@ const createWindow = () => {
     if (gameWindow && !gameWindow.isVisible() && !gameWindow.isDestroyed()) {
       gameWindow.show();
     }
+    const _telemetryInterval = setInterval(async () => {
+      if (!gameWindow || gameWindow.isDestroyed()) { clearInterval(_telemetryInterval); return; }
+      try {
+        const stats = await gameWindow.webContents.executeJavaScript('window.__dawnTelemetry?.getStats()');
+        if (stats && stats.ready) {
+          console.log(`[live-telemetry] FPS: ${stats.fps} | FT avg: ${stats.avgFt}ms (min: ${stats.minFt}ms, max: ${stats.maxFt}ms, p99: ${stats.p99Ft}ms) | Jitter: ${stats.jitter}ms | Stutters: ${stats.stutters} | Hitches: ${stats.hitches} | Frames: ${stats.totalFrames}`);
+        }
+      } catch (e) {}
+    }, 2000);
   });
 
   gameWindow.webContents.on("render-process-gone", (event, details) => {
@@ -482,6 +798,49 @@ const createWindow = () => {
       matchEnded();
     }
     _navPreviousUrl = url;
+
+    gameWindow.webContents.send("url-change", url);
+
+    if (settings.discord_rpc && gameWindow.DiscordRPC) {
+      const base_url = settings.base_url;
+      const stateMap = {
+        [`${base_url}`]: "In the lobby",
+        [`${base_url}hub/leaderboard`]: "Viewing the leaderboard",
+        [`${base_url}hub/clans/champions-league`]: "Viewing the clan leaderboard",
+        [`${base_url}hub/clans/my-clan`]: "Viewing their clan",
+        [`${base_url}hub/market`]: "Viewing the market",
+        [`${base_url}hub/live`]: "Viewing videos",
+        [`${base_url}hub/news`]: "Viewing news",
+        [`${base_url}hub/terms`]: "Viewing the terms of service",
+        [`${base_url}store`]: "Viewing the store",
+        [`${base_url}servers/main`]: "Viewing main servers",
+        [`${base_url}servers/parkour`]: "Viewing parkour servers",
+        [`${base_url}servers/custom`]: "Viewing custom servers",
+        [`${base_url}quests/hourly`]: "Viewing hourly quests",
+        [`${base_url}friends`]: "Viewing friends",
+        [`${base_url}inventory`]: "Viewing their inventory",
+      };
+
+      let state;
+      if (stateMap[url]) {
+        state = stateMap[url];
+      } else if (url.startsWith(`${base_url}games/`) || url.startsWith(`${base_url}hub/ranked`)) {
+        state = "In a match";
+      } else if (url.startsWith(`${base_url}profile/`)) {
+        state = "Viewing a profile";
+      } else {
+        state = "In the lobby";
+      }
+
+      try {
+        gameWindow.DiscordRPC.setState(state);
+      } catch (err) {}
+    }
+  });
+
+  gameWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: "deny" };
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
@@ -578,8 +937,15 @@ const createWindow = () => {
     }, 10000);
   }
   gameWindow.loadURL(targetUrl);
-  applyFrameCap(gameWindow, settings.fps_cap);
   gameWindow.maximize();
+  registerShortcuts(gameWindow);
+  if (settings.discord_rpc) {
+    try {
+      gameWindow.DiscordRPC = new DiscordRPC();
+    } catch (e) {
+      console.warn("DiscordRPC failed to initialize:", e);
+    }
+  }
 
   setTimeout(() => {
     if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.isVisible()) {

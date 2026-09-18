@@ -1,5 +1,109 @@
 [
   {
+    "version": "1.3.6",
+    "date": "15/9/2026",
+    "changelogs": [
+      "Added an option to view ping inside of the lobby",
+      "Added a toggle for Quick CSS",
+      "Overhauled Weapon Customizations menu to be more intuitive",
+      "Fixed [Sour Kandy] not getting swapped",
+      "Removed menu resizing"
+    ]
+  },
+  {
+    "version": "1.3.5",
+    "date": "9/9/2026",
+    "changelogs": [
+      "Made quick CSS an actual file that automatically syncs",
+      "Added Import from file and Open in Editor buttons to quick CSS",
+      "Added a button to reset menu size and position",
+      "Fixed colored killfeed, again",
+      "Fixed headshot % in ranked games",
+      "Fixed inventory favorites not saving correctly"
+    ]
+  },
+  {
+    "version": "1.3.4",
+    "date": "6/9/2026",
+    "changelogs": [
+      "Disabled a kirka debug feature that provided an unfair advantage"
+    ]
+  },
+  {
+    "version": "1.3.3",
+    "date": "3/9/2026",
+    "changelogs": [
+      "Added clan lookup directly from profile",
+      "Added KTiers icon in profiles",
+      "Optimized gallery for large amounts of files"
+    ]
+  },
+  {
+    "version": "1.3.2",
+    "date": "19/8/2026",
+    "changelogs": [
+      "Added per-weapon Inspect Durations",
+      "Fixed text fields not registering the set key for custom inspect",
+      "Fixed colored killfeed"
+    ]
+  },
+  {
+    "version": "1.3.1",
+    "date": "30/7/2026",
+    "changelogs": [
+      "Reverted the change in electron versions"
+    ]
+  },
+  {
+    "version": "1.3.0",
+    "date": "30/7/2026",
+    "changelogs": [
+      "Added a toggle for auto updating",
+      "Updated Electron Version to latest (might revert this change)"
+    ]
+  },
+  {
+    "version": "1.2.3",
+    "date": "27/7/2026",
+    "changelogs": [
+      "Teeny tiny bug fix"
+    ]
+  },
+  {
+    "version": "1.2.2",
+    "date": "27/7/2026",
+    "changelogs": [
+      "Fixed a small rare bug that constantly reset the Indicators"
+    ]
+  },
+  {
+    "version": "1.2.1",
+    "date": "26/7/2026",
+    "changelogs": [
+      "Added Inventory rarity/price sorting",
+      "Added Bolt Price when inspecting an item",
+      "Fixed Stats not zeroing when resetting the match",
+      "Other Small bug fixes and improvements"
+    ]
+  },
+  {
+    "version": "1.2.0",
+    "date": "19/7/2026",
+    "changelogs": [
+      "Added Bolt Values into the Trading Menu",
+      "Added Bolt Values into the Inventory",
+      "Added Weapon Rotations",
+      "Removed ADS Power because its now built into kirka",
+      "Replaced Command Abbreviations with a Command Helper",
+      "",
+      "Fixed several bugs caused by the new update:",
+      "- Moved Room Creation Presets into the Match Settings",
+      "- Profiles not getting recognized",
+      "- Black weapons when turning off arms and shadows",
+      "- Friend Search/Open Profile positioning"
+    ]
+  },
+  {
     "version": "1.1.8",
     "date": "11/7/2026",
     "changelogs": [
