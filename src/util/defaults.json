@@ -118,6 +118,7 @@
     "num_raster_threads": 4,
     "performance_mode": true,
     "logic_tick_rate": "60",
+    "engine_profile": "stock",
     "use_angle_opengl": false,
     "use_angle_metal": false,
     "fps_cap": 0,

@@ -846,12 +846,27 @@
         </div>
         <div class="option">
           <span>Logic Tick Rate</span>
-          <span class="description">EXPERIMENTAL — overclocks the game's internal 60Hz simulation loop (prediction, interpolation, bhop timing). Rendering is still limited by your display's refresh. 240 = smoothest, more CPU. If the world moves at 2x speed, set back to 60.</span>
+          <span class="description">EXPERIMENTAL — overclocks the game's internal 60Hz simulation loop (prediction, interpolation, bhop timing). This is the compositor-independent way to get the old client's feel: rendering is still limited by your display, only the engine gets faster. If the world moves at 2x speed, set back to 60.</span>
           <div class="custom-select">
             <select id="logic_tick_rate" data-setting="logic_tick_rate">
               <option value="60">60 Hz (stock)</option>
               <option value="120">120 Hz</option>
               <option value="240">240 Hz</option>
+              <option value="480">480 Hz (old-client feel)</option>
+            </select>
+          </div>
+        </div>
+        <div class="option requires-restart">
+          <span>Engine Profile</span>
+          <span class="description">RESEARCH MODE — A/B compositor configs (see RESEARCH-UNCAP-MACOS.md). stock = verified smooth 60. uncap* = the old client's 500fps flags on modern Chromium — known to be able to wreck presentation on this panel, so measure before believing.</span>
+          <div class="custom-select">
+            <select id="engine_profile" data-setting="engine_profile">
+              <option value="stock">Stock (verified smooth)</option>
+              <option value="uncap">Uncap (old-client flags)</option>
+              <option value="uncap_gl">Uncap + OpenGL backend</option>
+              <option value="uncap_ipgpu">Uncap + in-process GPU</option>
+              <option value="uncap_gum">Uncap + max-gum-fps 9999</option>
+              <option value="uncap_legacy_skia">Uncap + legacy Skia renderer</option>
             </select>
           </div>
         </div>
