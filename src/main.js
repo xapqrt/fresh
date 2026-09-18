@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net } = require("electron");
+const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net, screen } = require("electron");
 const { applySwitches } = require("./util/switches");
 const { default_settings, allowed_urls } = require("./util/defaults.json");
 const { registerShortcuts } = require("./util/shortcuts");
@@ -98,13 +98,25 @@ setInterval(() => {
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
 
-// FPS cap: webContents.setFrameRate pins the page frame rate (0 = uncapped,
-// which runs at the compositor's natural rate — 120Hz on ProMotion, 240Hz on
-// an external 240Hz panel). Live-updatable: no restart needed.
+// FPS cap: webContents.setFrameRate pins the page frame rate.
+// SAFETY: it is always clamped to the display's actual refresh rate —
+// requesting a rate HIGHER than the panel can present makes Chromium
+// produce frames faster than WindowServer flips, which on macOS ANGLE
+// Metal saturates the GPU command ring and DROPS presented frames
+// (measured: 1.6–2.7 FPS on screen at "650 FPS" rAF). On the 60Hz Air
+// panel every value ≥ 60 is therefore a no-op; only a true sub-refresh
+// cap (e.g. 30) actually calls setFrameRate. Live-updatable, no restart.
 const applyFrameCap = () => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   const cap = Number(settings.fps_cap) || 0;
-  try { gameWindow.webContents.setFrameRate(cap); } catch (e) {}
+  if (cap === 0) return;
+  try {
+    const displayHz = Math.round(screen.getPrimaryDisplay().refreshRate) || 60;
+    const eff = Math.min(cap, displayHz);
+    if (eff > 0 && eff < displayHz) {
+      gameWindow.webContents.setFrameRate(eff);
+    }
+  } catch (e) {}
 };
 
 // Settings: in-memory update + renderer broadcast are immediate; the

@@ -832,14 +832,15 @@
       <div class="option-group">
         <div class="option">
           <span>FPS Cap</span>
-          <span class="description">Pin the page frame rate. Uncapped = display refresh (120Hz on ProMotion, 240Hz on a 240Hz panel).</span>
+          <span class="description">Cap the page below your display's refresh rate (values at/above it are no-ops — producing frames faster than the panel physically refreshes only drops frames). On a 60Hz display, only 30 is a real cap.</span>
           <div class="custom-select">
             <select id="fps_cap" data-setting="fps_cap">
-              <option value="0">Uncapped</option>
+              <option value="0">No cap (default)</option>
+              <option value="30">30 FPS</option>
               <option value="60">60 FPS</option>
-              <option value="120">120 FPS</option>
-              <option value="144">144 FPS</option>
-              <option value="240">240 FPS</option>
+              <option value="120">120 FPS (needs 120Hz+ display)</option>
+              <option value="144">144 FPS (needs 144Hz+ display)</option>
+              <option value="240">240 FPS (needs 240Hz+ display)</option>
             </select>
           </div>
         </div>
@@ -852,14 +853,6 @@
               <option value="120">120 Hz</option>
               <option value="240">240 Hz</option>
             </select>
-          </div>
-        </div>
-        <div class="option requires-restart">
-          <span>Low Latency Mode</span>
-          <span class="description">Uncap the compositor for lower input/frame latency on 120/240Hz displays. May cause screen tearing on fixed-refresh (non-VRR) panels.</span>
-          <div class="checkbox">
-            <input type="checkbox" id="low_latency" data-setting="low_latency" />
-            <label for="low_latency"></label>
           </div>
         </div>
         <div class="option requires-restart">
