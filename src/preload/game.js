@@ -91,17 +91,47 @@
   } catch (e) { console.warn('[dawn-timer] pump failed:', e); }
 })();
 
+// ── Raw-mouse kill switch ────────────────────────────────────────────────
+// unadjustedMovement takes over the OS-level HID path for the mouse. If the
+// process dies while that capture is still live, macOS can be left with a
+// corrupted HID state — reported as both buttons acting as right-click,
+// requiring the Bluetooth mouse to be removed and re-paired. That is a
+// system-level breakage, so raw input is OPT-IN and OFF by default:
+//
+//   enable : localStorage.setItem("dawn_raw_mouse", "true")  then relaunch
+//   live   : window.__dawnRawMouseOverride = true | false
+//
+if (typeof window.__dawnRawMouseOverride === "undefined") window.__dawnRawMouseOverride = undefined;
+const _rawMouseOn = () => {
+  if (typeof window.__dawnRawMouseOverride === "boolean") return window.__dawnRawMouseOverride;
+  try { return localStorage.getItem("dawn_raw_mouse") === "true"; } catch (e) { return false; }
+};
+
+// Never let the pointer lock / HID capture outlive the page or the process.
+const _releaseMouse = () => {
+  try {
+    window.__dawnRawMouseOverride = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+  } catch (e) {}
+};
+window.addEventListener("beforeunload", _releaseMouse, true);
+window.addEventListener("pagehide", _releaseMouse, true);
+try {
+  require("electron").ipcRenderer.on("dawn-teardown-input", _releaseMouse);
+} catch (e) {}
+
 // ── Raw (unaccelerated) mouse in pointer lock ────────────────────────────
 // Chromium's PointerLockOptions lets us request unadjustedMovement which
 // skips Windows' "Enhance pointer precision" acceleration and the macOS
 // mouse curve — this is the #1 cause of "sluggish" vs aimer.pro feel,
 // because aimer.pro runs with `unadjustedMovement: true` on its canvas
 // requestPointerLock call. We intercept every requestPointerLock and
-// force unadjustedMovement:true.
+// force unadjustedMovement:true when raw is opted-in.
 (function installRawMouse() {
   try {
     const _origRPL = Element.prototype.requestPointerLock;
     Element.prototype.requestPointerLock = function (opts) {
+      if (!_rawMouseOn()) return _origRPL.call(this, opts);   // raw capture disabled
       const o = Object.assign({}, opts || {}, { unadjustedMovement: true });
       let r;
       try {
@@ -119,7 +149,11 @@
       }
       return r;
     };
-    console.log('[dawn-input] unadjustedMovement forced on pointer lock (with plain fallback)');
+    console.log(`[dawn-input] unadjustedMovement wrapper armed (raw=${_rawMouseOn()})`);
+    // Hint for users: enable raw mouse for snappy feel at 480Hz
+    if (!_rawMouseOn()) {
+      console.log('[dawn-input] raw mouse OFF by default (safe). Enable: localStorage.setItem("dawn_raw_mouse","true") then relaunch, or window.__dawnRawMouseOverride=true');
+    }
   } catch (e) { console.warn('[dawn-input] raw mouse install failed:', e); }
 })();
 
@@ -145,8 +179,8 @@
   try {
     if (typeof window.MouseEvent === "undefined") return;
 
-    const stats = { raw: 0, coalesced: 0, hz: 0, active: false };
-    window.__dawnRawMouse = true;      // set false in console to disable
+    const stats = { raw: 0, coalesced: 0, hz: 0, active: false, rawOn: false };
+    window.__dawnRawMouse = true;      // legacy toggle, still checked below
     window.__dawnRawMouseStats = stats;
 
     let _seen = 0;                     // raw samples in the current 1s window
@@ -154,6 +188,7 @@
 
     const _onRaw = (e) => {
       if (!document.pointerLockElement) return;        // only while aiming
+      if (!_rawMouseOn()) return;                       // gated by kill-switch
       if (window.__dawnRawMouse === false) return;
       if (e.pointerType && e.pointerType !== "mouse") return;
 
@@ -167,6 +202,7 @@
       }
       stats.raw++;
       stats.active = true;
+      stats.rawOn = _rawMouseOn();
 
       const ev = new MouseEvent("mousemove", {
         bubbles: true, cancelable: true, composed: true, view: window,
@@ -184,6 +220,7 @@
 
     const _onMove = (e) => {
       if (!e.isTrusted) return;                        // our own synthetic
+      if (!_rawMouseOn()) return;                       // nothing to suppress when OFF
       if (window.__dawnRawMouse === false) return;
       if (!document.pointerLockElement) return;
       if (!stats.active) return;                       // raw never arrived → untouched
@@ -194,7 +231,7 @@
 
     window.addEventListener("pointerrawupdate", _onRaw, true);
     window.addEventListener("mousemove", _onMove, true);
-    console.log("[dawn-input] un-coalesced mouse stream armed (pointerrawupdate -> mousemove)");
+    console.log(`[dawn-input] un-coalesced mouse stream armed (raw=${_rawMouseOn()}, pointerrawupdate -> mousemove)`);
   } catch (e) {
     console.warn("[dawn-input] raw mouse stream failed:", e);
   }
@@ -361,29 +398,36 @@ function toggleFrameTimeLogger() {
     //  __dawnTickMul        — logic overclock multiplier (1=60Hz … 8=480Hz)
     //  __dawnInterpSnapshots — snapshots-back the remote buffer is rendering
     //  __dawnInterpDelayMs  — target interp delay slider value in ms
+    // On macOS presentation is ALWAYS 60Hz (we never uncap rAF — that
+    // caused 99.8% dropped frames + WindowServer stalls). The win is Sim
+    // Tick freshness: input + physics 8x per frame at 480Hz.
     const tickDt = Number(window.__dawnTickDt);
     const tickMul = window.__dawnTickMul || 1;
+    const simHz = Math.round(tickMul * 60);
+    const rawStats = window.__dawnRawMouseStats || {};
     const tickSamples = window.__dawnTickSamples || (window.__dawnTickSamples = []);
     if (tickDt > 0) {
       tickSamples.push(tickDt);
       if (tickSamples.length > 120) tickSamples.shift();
     }
     let lines = [
-      `Render FPS ${stats.fps}  (rAF)`,
+      `Sim ${simHz}Hz (x${tickMul}) · Render ${stats.fps} FPS (rAF)  |  raw ${rawStats.rawOn ? 'ON' : 'OFF'} mouse ${rawStats.hz || 0}Hz`,
       `FT min ${stats.minFt}ms  max ${stats.maxFt}ms  avg ${stats.avgFt}ms  p99 ${stats.p99Ft}ms`,
       `FT jitter ${stats.jitter}ms  stutters ${stats.stutters}  hitches ${stats.hitches}`,
     ];
     if (tickSamples.length) {
       const sum = tickSamples.reduce((a, b) => a + b, 0);
-      const avgDt = sum / tickSamples.length; // seconds between loop invocations
+      const avgDt = sum / tickSamples.length;
       const logicHz = Math.round(1 / avgDt);
-      lines.push(`Logic Tick ~${logicHz}Hz  (mul x${tickMul})`);
+      lines.push(`Logic Tick ~${logicHz}Hz  (mul x${tickMul})  dt ${(tickDt*1000).toFixed(2)}ms`);
     }
     const snaps = Number(window.__dawnInterpSnapshots);
     const targetMs = Number(window.__dawnInterpDelayMs) || 75;
     if (Number.isFinite(snaps)) {
       lines.push(`Interp ${snaps} snapshots  (~${snaps * 33}ms, target ${targetMs}ms)`);
     }
+    const rDiv = window.__dawnRemoteClockDiv;
+    if (rDiv != null) lines.push(`RemoteClockDiv ${rDiv}  EffIpm ${window.__dawnEffIpm || '?'}  raw ${rawStats.raw||0}/coal ${rawStats.coalesced||0}`);
     _frameTimeOverlay.textContent = lines.join("\n");
     if (_frameTimeActive) _ftRAF = requestAnimationFrame(_sample);
   }

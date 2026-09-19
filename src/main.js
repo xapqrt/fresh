@@ -1471,6 +1471,17 @@ app.on("child-process-gone", (_, details) => {
 app.on("before-quit", () => {
   releaseSyntheticKeys();
   globalShortcut.unregisterAll();
+  // Release the pointer lock / raw HID capture BEFORE the process dies.
+  // An active unadjustedMovement (raw HID) lock that outlives the process
+  // can leave the mouse's HID state corrupted on macOS — reported as both
+  // buttons acting as right-click, needing the Bluetooth device to be
+  // removed and re-paired. The preload also does this on beforeunload /
+  // pagehide; this covers the case where the page never gets to unload.
+  try {
+    if (gameWindow && !gameWindow.isDestroyed()) {
+      gameWindow.webContents.send("dawn-teardown-input");
+    }
+  } catch (e) {}
   // Flush any debounced settings write so the last change isn't lost.
   if (_settingsSaveTimer) {
     clearTimeout(_settingsSaveTimer);
