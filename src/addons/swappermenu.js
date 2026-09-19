@@ -239,9 +239,9 @@ const editResourceSwapper = () => {
   const saveSoundBtn = document.getElementById("save-sound");
 
   ipcRenderer.on("save-sound-success", () => {
-    saveSkinBtn.innerHTML = "Sound saved!";
+    saveSoundBtn.innerHTML = "Sound saved!";
     setTimeout(() => {
-      saveSkinBtn.innerHTML = "Sound Skin";
+      saveSoundBtn.innerHTML = "Save Sound";
     }, 2000)
   });
   ipcRenderer.on("save-sound-error", (event, err) => {

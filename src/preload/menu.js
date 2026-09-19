@@ -75,6 +75,7 @@ class Menu {
     this.handleSearch();
     this.handleButtons();
     this.handleInfoTooltips();
+    this.handleClearFields();
     this.handleQuickCSS();
 
     initBrowser(this.menu);
@@ -186,6 +187,7 @@ class Menu {
 
     titlebar.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
+      if (e.target.closest(".titlebar-buttons")) return;
       isDragging = true;
 
       savedTransition = menu.style.transition;
@@ -237,6 +239,178 @@ class Menu {
         centerMenu();
       }
     });
+
+    // ---- resizable menu + titlebar window controls ----
+    const MIN_W = 520;
+    const MIN_H = 320;
+
+    // Must match the CSS caps: max-width calc(100vw - 2rem), max-height calc(100vh - 5rem)
+    const maxSize = () => {
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      return {
+        w: Math.max(MIN_W, window.innerWidth - rem * 2),
+        h: Math.max(MIN_H, window.innerHeight - rem * 5),
+      };
+    };
+
+    const clampSize = (w, h) => {
+      const max = maxSize();
+      return {
+        w: Math.min(max.w, Math.max(MIN_W, Math.round(w))),
+        h: Math.min(max.h, Math.max(MIN_H, Math.round(h))),
+      };
+    };
+
+    const applySize = (w, h) => {
+      menu.style.minWidth = "";
+      menu.style.minHeight = "";
+      const { w: cw, h: ch } = clampSize(w, h);
+      menu.style.setProperty("--menu-width", `${cw}px`);
+      menu.style.setProperty("--menu-height", `${ch}px`);
+      menu.classList.toggle("resized-small", cw < 620);
+      return { w: cw, h: ch };
+    };
+
+    const readSize = () => ({
+      w: menu.offsetWidth || 960,
+      h: menu.offsetHeight || 640,
+    });
+
+    const settled = {
+      w: 0,
+      h: 0,
+    };
+
+    const applySavedSize = () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("menu-size"));
+        if (!saved || typeof saved.w !== "number" || typeof saved.h !== "number") return;
+        settled.w = saved.w;
+        settled.h = saved.h;
+        applySize(saved.w, saved.h);
+      } catch (e) {}
+    };
+
+    // persist a manual size
+    const commitSize = () => {
+      const { w, h } = readSize();
+      settled.w = w;
+      settled.h = h;
+      localStorage.setItem("menu-size", JSON.stringify({ w, h }));
+    };
+
+    if (document.readyState === "complete" || document.readyState === "interactive") {
+      applySavedSize();
+    } else {
+      window.addEventListener("DOMContentLoaded", applySavedSize);
+      window.addEventListener("load", applySavedSize);
+    }
+
+    // bottom-right grip
+    const grip = menu.querySelector(".resize-grip");
+    if (grip) {
+      let resizing = false;
+      let startX = 0;
+      let startY = 0;
+      let startW = 0;
+      let startH = 0;
+      let startLeft = 0;
+      let startTop = 0;
+      let savedTransition = menu.style.transition || "";
+
+      grip.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        resizing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        const size = readSize();
+        startW = size.w;
+        startH = size.h;
+        const rect = menu.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+        savedTransition = menu.style.transition || "";
+        menu.style.transition = "none";
+        document.body.style.userSelect = "none";
+        e.preventDefault();
+      });
+
+      const doResize = (e) => {
+        if (!resizing) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        // natural bottom-right drag: keep top-left pinned
+        applySize(startW + dx, startH + dy);
+        const anchorX = window.innerWidth / 2;
+        const anchorY = window.innerHeight / 2;
+        setMenuPosition(startLeft - anchorX, startTop - anchorY);
+      };
+
+      window.addEventListener("mousemove", doResize);
+
+      const stopResize = () => {
+        if (!resizing) return;
+        resizing = false;
+        menu.style.transition = savedTransition;
+        document.body.style.userSelect = "";
+        commitSize();
+      };
+
+      window.addEventListener("mouseup", stopResize);
+      window.addEventListener("blur", stopResize);
+    }
+
+    // titlebar minimize / expand
+    const btnMin = menu.querySelector(".tb-minimize");
+    const btnExpand = menu.querySelector(".tb-expand");
+    const preExpand = { w: 0, h: 0, x: -1, y: -1 };
+
+    if (btnMin) {
+      btnMin.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const minimized = menu.getAttribute("data-minimized") === "true";
+        if (!minimized) {
+          // keep the menu where it is, just roll it up
+          menu.setAttribute("data-expanded", "false");
+          if (btnExpand) btnExpand.classList.remove("active");
+        }
+        menu.setAttribute("data-minimized", String(!minimized));
+      });
+    }
+
+    if (btnExpand) {
+      btnExpand.addEventListener("click", (e) => {
+        e.stopPropagation();
+        menu.setAttribute("data-minimized", "false");
+        const expanded = menu.getAttribute("data-expanded") === "true";
+        if (expanded) {
+          // shrink back to the remembered size + spot
+          menu.setAttribute("data-expanded", "false");
+          btnExpand.classList.remove("active");
+          const w = preExpand.w || settled.w || 960;
+          const h = preExpand.h || settled.h || 640;
+          applySize(w, h);
+          const x = preExpand.x !== -1 ? preExpand.x : 0 - w / 2;
+          const y = preExpand.y !== -1 ? preExpand.y : 0 - h / 2;
+          setMenuPosition(x, y);
+        } else {
+          // remember current size + spot, then fill the screen
+          const size = readSize();
+          preExpand.w = settled.w || size.w;
+          preExpand.h = settled.h || size.h;
+          const pos = getMenuPosition();
+          preExpand.x = pos.x;
+          preExpand.y = pos.y;
+          const max = maxSize();
+          applySize(max.w, max.h);
+          setMenuPosition(0 - max.w / 2, 0 - max.h / 2);
+          menu.setAttribute("data-expanded", "true");
+          btnExpand.classList.add("active");
+        }
+        const after = readSize();
+        menu.classList.toggle("resized-small", after.w < 620);
+      });
+    }
   }
 
   setLocalGradient() {
@@ -1477,6 +1651,14 @@ class Menu {
         slider: ".range.menu-blur",
         input: ".value.menu-blur",
       },
+      {
+        slider: ".range.interp-delay",
+        input: ".value.interp-delay",
+      },
+      {
+        slider: ".range.bhop-hold",
+        input: ".value.bhop-hold",
+      },
     ];
 
     sliderMap.forEach(({ slider, input }) => {
@@ -2125,6 +2307,7 @@ class Menu {
     resetMenuSize.addEventListener("click", () => {
       this.localStorage.removeItem("menu-position");
       this.localStorage.removeItem("menu-size");
+      this.localStorage.removeItem("menu-maximized");
       window.location.reload();
     });
 
@@ -2187,6 +2370,19 @@ class Menu {
     this.menu.querySelectorAll(".info-wrapper").forEach((wrapper) => {
       wrapper.querySelector(".info-btn").onmouseenter = () => (wrapper.querySelector(".info-tooltip").style.display = "block");
       wrapper.querySelector(".info-btn").onmouseleave = () => (wrapper.querySelector(".info-tooltip").style.display = "none");
+    });
+  }
+
+  handleClearFields() {
+    this.menu.querySelectorAll(".clear-field").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const target = this.menu.querySelector(`input[data-setting="${btn.dataset.clearFor}"]`);
+        if (!target) return;
+        target.value = "";
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+      });
     });
   }
 

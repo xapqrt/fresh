@@ -59,9 +59,12 @@ document.addEventListener("DOMContentLoaded", () => {
 async function executeCardScript(customcardlist) {
   let openingdelay = 2000;
   let cards;
-  try {
+  // Fall back to the default card list whenever the caller passes nothing
+  // usable. (The old `try { cards = customcardlist } catch { ... }` could not
+  // throw, so the defaults were dead code and `cards` stayed undefined.)
+  if (Array.isArray(customcardlist) && customcardlist.length) {
     cards = customcardlist;
-  } catch {
+  } else {
     cards = [
       { cardid: "723c4ba7-57b3-4ae4-b65e-75686fa77bf2", name: "Cold" },
       { cardid: "723c4ba7-57b3-4ae4-b65e-75686fa77bf1", name: "Girls band" },
@@ -486,9 +489,11 @@ async function executeCardScript(customcardlist) {
 async function executeChestScript(customchestlist) {
   let openingdelay = 2000;
   let chests;
-  try {
+  // Fall back to the default chest list whenever the caller passes nothing
+  // usable (see note in executeCardScript).
+  if (Array.isArray(customchestlist) && customchestlist.length) {
     chests = customchestlist;
-  } catch {
+  } else {
     chests = [
       {
         chestid: "077a4cf2-7b76-4624-8be6-4a7316cf5906",

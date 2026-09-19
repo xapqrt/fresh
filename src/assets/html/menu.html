@@ -1,7 +1,12 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
 
 <div class="menu" data-theme="dark" data-active="false">
-  <div class="menu-titlebar">Dawn Client</div>
+  <div class="menu-titlebar"><span class="title-label">Dawn Client</span>
+    <div class="titlebar-buttons">
+      <i class="fas fa-compress-alt tb-minimize" title="Minimize (restore with another click)"></i>
+      <i class="fas fa-expand-alt tb-expand" title="Expand to fill the screen (click again to restore)"></i>
+    </div>
+  </div>
   <aside class="sidebar">
     <div class="search-input">
       <i class="fas fa-search"></i>
@@ -58,25 +63,30 @@
       </div>
     </div>
   </aside>
+  <div class="resize-grip" title="Drag to resize — size is remembered"></div>
   <div class="content">
-    <div id="ui-options" class="juice options active">
+    <div id="ui-options" class="juice options active"><div class="grid">
       <div class="option-group">
+<div class="group-title">CSS Loadout</div>
         <div class="option">
-          <span>Enable CSS Link</span>
+          <span>Custom CSS</span>
           <div class="checkbox">
             <input type="checkbox" id="css_enabled" data-setting="css_enabled" />
             <label for="css_enabled"></label>
           </div>
         </div>
         <div class="option">
-          <span>CSS Link</span>
-          <input type="text" placeholder="https://.../.css" data-setting="css_link" />
+          <span>CSS URL</span>
+          <div class="textfield">
+            <input type="text" placeholder="https://.../.css" data-setting="css_link" />
+            <i class="fas fa-xmark clear-field" data-clear-for="css_link" title="Clear (acts like an empty link)"></i>
+          </div>
         </div>
         <div class="option dropdown">
           <div class="option top" style="width:100%">
             <i class="fas fa-angle-down"></i>
             <div class="left" style="margin-right:auto">
-              <span>Quick CSS</span>
+              <span>Live CSS</span>
             </div>
             <div class="css-buttons" onclick="event.stopPropagation()">
               <i class="fas fa-upload import-css" title="Import from file"></i>
@@ -93,36 +103,44 @@
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Heads-Up</div>
         <div class="option">
-          <span>Permanent Crosshair</span>
+          <span>Crosshair Always On</span>
           <div class="checkbox">
             <input type="checkbox" id="perm_crosshair" data-setting="perm_crosshair" />
             <label for="perm_crosshair"></label>
           </div>
         </div>
         <div class="option">
-          <span>Permanent Scoreboard</span>
+          <span>Scoreboard Always On</span>
           <div class="checkbox">
             <input type="checkbox" id="perm_tablist" data-setting="perm_tablist" />
             <label for="perm_tablist"></label>
           </div>
         </div>
         <div class="option">
-          <span>Hitmarker Link</span>
-          <input type="text" placeholder="https://.../.png" data-setting="hitmarker_link" />
+          <span>Hitmarker Img</span>
+          <div class="textfield">
+            <input type="text" placeholder="https://.../.png" data-setting="hitmarker_link" />
+            <i class="fas fa-xmark clear-field" data-clear-for="hitmarker_link" title="Clear"></i>
+          </div>
         </div>
         <div class="option">
-          <span>Kill Icon Link</span>
-          <input type="text" placeholder="https://.../.png" data-setting="killicon_link" />
+          <span>Kill Icon Img</span>
+          <div class="textfield">
+            <input type="text" placeholder="https://.../.png" data-setting="killicon_link" />
+            <i class="fas fa-xmark clear-field" data-clear-for="killicon_link" title="Clear"></i>
+          </div>
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Feed + Info</div>
         <div class="option dropdown">
           <div class="option top" style="width:100%">
             <i class=" fas fa-angle-down"></i>
             <div class="left" style="margin-right:auto">
-              <span>Colored Kill Feed</span>
-              <span class="description">Color kills by team</span>
+              <span>Team Kills</span>
+              <span class="description">Kill feed matches team colors</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="colored_killfeed" data-setting="colored_killfeed" />
@@ -150,8 +168,8 @@
           <div class="option top">
             <i class=" fas fa-angle-down"></i>
             <div class="left">
-              <span>Info Overlay</span>
-              <span class="description">Only show specific data of the Info Overlay</span>
+              <span>Match Info</span>
+              <span class="description">Which stats your in-match info panel shows</span>
             </div>
           </div>
           <div class="content">
@@ -170,21 +188,21 @@
               </div>
             </div>
             <div class="option">
-              <span>Triangles</span>
+              <span>Lag Warning</span>
               <div class="checkbox">
                 <input type="checkbox" id="info_triangles" data-setting="info_triangles" />
                 <label for="info_triangles"></label>
               </div>
             </div>
             <div class="option">
-              <span>FPS Average</span>
+              <span>Avg FPS</span>
               <div class="checkbox">
                 <input type="checkbox" id="info_fpsavg" data-setting="info_fpsavg" />
                 <label for="info_fpsavg"></label>
               </div>
             </div>
             <div class="option">
-              <span>FPS</span>
+              <span>Live FPS</span>
               <div class="checkbox">
                 <input type="checkbox" id="info_fps" data-setting="info_fps" />
                 <label for="info_fps"></label>
@@ -210,34 +228,34 @@
           <div class="option top">
             <i class=" fas fa-angle-down"></i>
             <div class="left">
-              <span>Indicators</span>
-              <span class="description">Show additional Indicators alongside Kills and Deaths</span>
+              <span>HUD Chips</span>
+              <span class="description">Extra stat chips next to your K/D</span>
             </div>
           </div>
           <div class="content">
             <div class="option">
-              <span>K/D Indicator</span>
+              <span>K/D</span>
               <div class="checkbox">
                 <input type="checkbox" id="kd_indicator" data-setting="kd_indicator" />
                 <label for="kd_indicator"></label>
               </div>
             </div>
             <div class="option">
-              <span>Assists Indicator</span>
+              <span>Assists</span>
               <div class="checkbox">
                 <input type="checkbox" id="assists_indicator" data-setting="assists_indicator" />
                 <label for="assists_indicator"></label>
               </div>
             </div>
             <div class="option">
-              <span>Points Indicator</span>
+              <span>Points</span>
               <div class="checkbox">
                 <input type="checkbox" id="points_indicator" data-setting="points_indicator" />
                 <label for="points_indicator"></label>
               </div>
             </div>
             <div class="option">
-              <span>Headshot Kills Indicator</span>
+              <span>Headshots</span>
               <div class="checkbox">
                 <input type="checkbox" id="hsp_indicator" data-setting="hsp_indicator" />
                 <label for="hsp_indicator"></label>
@@ -247,33 +265,34 @@
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Chat + HUD</div>
         <div class="option">
-          <span>Chat Height</span>
+          <span>Chat Size</span>
           <input type="range" min="0" max="20" step="0.25" class="range" data-setting="chat_height">
         </div>
         <div class="option">
-          <span>Hide Chat</span>
+          <span>Mute Chat</span>
           <div class="checkbox">
             <input type="checkbox" id="hide_chat" data-setting="hide_chat" />
             <label for="hide_chat"></label>
           </div>
         </div>
         <div class="option">
-          <span>Hide Kill Icon Text</span>
+          <span>Hide Kill Tags</span>
           <div class="checkbox">
             <input type="checkbox" id="hide_kill_text" data-setting="hide_kill_text" />
             <label for="hide_kill_text"></label>
           </div>
         </div>
         <div class="option">
-          <span>Hide Interface</span>
+          <span>Hide HUD</span>
           <div class="checkbox">
             <input type="checkbox" id="hide_interface" data-setting="hide_interface" />
             <label for="hide_interface"></label>
           </div>
         </div>
         <div class="option">
-          <span>Skip Loading Screen</span>
+          <span>Skip Load Screens</span>
           <div class="checkbox">
             <input type="checkbox" id="skip_loading" data-setting="skip_loading" />
             <label for="skip_loading"></label>
@@ -281,8 +300,9 @@
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Juice</div>
         <div class="option">
-          <span>UI Animations</span>
+          <span>UI Juice</span>
           <div class="checkbox">
             <input type="checkbox" id="ui_animations" data-setting="ui_animations" />
             <label for="ui_animations"></label>
@@ -297,20 +317,22 @@
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">HUD Tuning</div>
         <div class="option">
-          <span>Ingame Interface Opacity</span>
+          <span>HUD Opacity</span>
           <input type="range" min="0" max="100" class="range" data-setting="interface_opacity" />
         </div>
         <div class="option">
-          <span>Ingame Interface Bounds</span>
+          <span>HUD Bounds</span>
           <input type="range" min="0" max="2" class="range" data-setting="interface_bounds" />
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Lobby</div>
         <div class="option">
           <div class="left">
-            <span>Server Map Backgrounds</span>
-            <div class="description">Display map backgrounds for servers</div>
+            <span>Map Previews</span>
+            <div class="description">Wallpaper behind each server card</div>
           </div>
           <div class="checkbox">
             <input type="checkbox" id="map_backgrounds" data-setting="map_backgrounds" />
@@ -319,8 +341,8 @@
         </div>
         <div class="option">
           <div class="left">
-            <span>Lobby Keybind Reminder</span>
-            <div class="description">Display the lobby keybind reminder</div>
+            <span>Keybind Reminder</span>
+            <div class="description">Reminds you of your menu hotkey in the lobby</div>
           </div>
           <div class="checkbox">
             <input type="checkbox" id="lobby_keybind_reminder" data-setting="lobby_keybind_reminder" />
@@ -329,8 +351,9 @@
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Profile</div>
         <div class="option">
-          <span>KTiers Rank in Profile</span>
+          <span>KTiers Rank</span>
           <div class="checkbox">
             <input type="checkbox" id="ktiers_icon" data-setting="ktiers_icon" />
             <label for="ktiers_icon"></label>
@@ -338,8 +361,8 @@
         </div>
         <div class="option">
           <div class="left">
-            <span>Badges and Gradient Names</span>
-            <div class="description">Display user customizations</div>
+            <span>Badges + Gradients</span>
+            <div class="description">Show off player bling</div>
           </div>
           <div class="checkbox">
             <input type="checkbox" id="customizations" data-setting="customizations" />
@@ -348,8 +371,8 @@
         </div>
         <div class="option">
           <div class="left">
-            <span>Gradient Animations</span>
-            <div class="description">Disable if you're having performance decreases</div>
+            <span>Gradient Motion</span>
+            <div class="description">Kill it if your FPS tanks</div>
           </div>
           <div class="checkbox">
             <input type="checkbox" id="animations" data-setting="animations" />
@@ -357,21 +380,16 @@
           </div>
         </div>
       </div>
-    </div>
+    </div></div></div>
     <div id="game-options" class="juice options">
-      <div class="option-group">
-        <div class="option">
-          <span>Bunnyhop</span>
-          <span class="description">Auto-strafe & ground-hop while holding trigger key</span>
-          <div class="switch">
+      <div class="option-group wide>
+        <div class="group-title">Movement</div>
+        <div class="option"><div class="left"><span>Auto Bhop</span><span class="description">Hold the key, eat the map — auto-strafe + ground-hop</span></div><div class="switch">
             <input type="checkbox" id="bhop_enabled" data-setting="bhop_enabled" />
             <label for="bhop_enabled"></label>
           </div>
         </div>
-        <div class="option">
-          <span>Bhop Trigger Key</span>
-          <span class="description">The key that starts/stops bhop (must differ from your jump key)</span>
-          <div class="custom-select">
+        <div class="option"><div class="left"><span>Bhop Trigger</span><span class="description">Key that starts or stops the hop. Can't be your jump key.</span></div><div class="custom-select">
             <select data-setting="bhop_toggle">
               <option value="Shift">Left Shift</option>
               <option value="Control">Left Control</option>
@@ -379,15 +397,17 @@
             </select>
           </div>
         </div>
-        <div class="option">
-          <span>Bhop Jump Key</span>
-          <span class="description">Jump key used by Kirka</span>
-          <div class="custom-select">
+        <div class="option"><div class="left"><span>Kirka Jump Key</span><span class="description">The jump key the game uses</span></div><div class="custom-select">
             <select data-setting="bhop_jump">
               <option value="KeySpace">Space</option>
               <option value="KeyQ">Q</option>
               <option value="KeyW">W</option>
             </select>
+          </div>
+        </div>
+        <div class="option"><div class="left"><span>Hop Hold (ms)</span><span class="description">How long each hop pins jump. Lower = tighter chain, too low drops hops. Default 4ms.</span></div><div class="right">
+            <input type="text" placeholder="4" maxlength="3" class="value bhop-hold" data-setting="bhop_hold_ms" />
+            <input type="range" min="1" max="60" step="1" class="range bhop-hold" data-setting="bhop_hold_ms" />
           </div>
         </div>
       </div>
@@ -399,15 +419,16 @@
         </div>
         <div data-tab="weapons" class="juice inner-tab">
           <i class="fas fa-gun"></i>
-          Weapon Customization
+          Gun Lab
         </div>
       </div>
-      <div id="visual-options" class="juice options inner active">
+      <div id="visual-options" class="juice options inner active"><div class="grid">
         <div class="option-group">
+<div class="group-title">Lobby</div>
           <div class="option">
             <div class="left">
-              <span>Show Lobby Ping</span>
-              <div class="description">Shows Ping to your selected region, usually a bit lower ingame</div>
+              <span>Lobby Ping</span>
+              <div class="description">Real ping to your region — usually lower in-game</div>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="lobby_ping" data-setting="lobby_ping" />
@@ -416,8 +437,8 @@
           </div>
           <div class="option">
             <div class="left">
-              <span>Show Quick Join Button</span>
-              <div class="description">Show Quick Join Button that joins the lobby/game link from your clipboard</div>
+              <span>Quick Join</span>
+              <div class="description">One tap joins the lobby link on your clipboard</div>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="quickjoin_button" data-setting="quickjoin_button" />
@@ -426,10 +447,11 @@
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">Spectate</div>
           <div class="option">
             <div class="left">
               <span>Spectate Friends</span>
-              <div class="description">Show spectate button in friends list</div>
+              <div class="description">Spectate button next to friends</div>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="spectate_button" data-setting="spectate_button" />
@@ -438,8 +460,8 @@
           </div>
           <div class="option">
             <div class="left">
-              <span>Spectate full Servers</span>
-              <span class="description">Replace the join button with a spectate button for full servers</span>
+              <span>Spectate Full Servers</span>
+              <span class="description">Lobby full? Swap Join for Spectate</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="spectate_full_games" data-setting="spectate_full_games" />
@@ -448,8 +470,9 @@
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">Inventory</div>
           <div class="option">
-            <span>Inventory Item Values</span>
+            <span>Item Value Tags</span>
             <div class="checkbox">
               <input type="checkbox" id="inventory_item_values" data-setting="inventory_item_values" />
               <label for="inventory_item_values"></label>
@@ -457,8 +480,8 @@
           </div>
           <div class="option">
             <div class="left">
-              <span>Prevent Selling Favorites</span>
-              <span class="description">Disables the sell button for favorited items inside of the inventory</span>
+              <span>Protect Favorites</span>
+              <span class="description">Locks the sell button on favorited skins</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="prevent_selling_favorites" data-setting="prevent_selling_favorites" />
@@ -467,10 +490,11 @@
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">Chat</div>
           <div class="option">
             <div class="left">
               <span>Command Helper</span>
-              <span class="description">Show Command Helper in Server chat</span>
+              <span class="description">Autocomplete in server chat</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="command_abbreviations" data-setting="command_abbreviations" />
@@ -480,7 +504,7 @@
           <div class="option">
             <div class="left">
               <span>Show Trade Buttons</span>
-              <span class="description">Show Offer, Bump and Cancel buttons above global chat</span>
+              <span class="description">Offer / Bump / Cancel above global chat</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="show_trade_buttons" data-setting="show_trade_buttons" />
@@ -489,8 +513,8 @@
           </div>
           <div class="option">
             <div class="left">
-              <span>Accept Trades on Click</span>
-              <div class="description">You still have to press enter to confirm</div>
+              <span>One-Click Trades</span>
+              <div class="description">Still press Enter to confirm</div>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="accept_on_click" data-setting="accept_on_click" />
@@ -498,11 +522,11 @@
             </div>
           </div>
         </div>
-      </div>
+      </div></div></div>
       <div id="weapons-options" class="juice options inner">
         <div class="wrapper weapon-config-buttons">
-          <i class="fas fa-share weapon-config export" title="Share Weapon Config"></i>
-          <i class="fas fa-file-import weapon-config import" title="Import Weapon Config"></i>
+          <i class="fas fa-share weapon-config export" title="Share Gun Config"></i>
+          <i class="fas fa-file-import weapon-config import" title="Import Gun Config"></i>
         </div>
         <div class="option">
           <select id="active-weapon" data-setting="active_weapon">
@@ -526,7 +550,7 @@
         <div class="option-group">
           <div class="option">
             <div class="left per-weapon">
-              <span>Inspect Duration (ms)</span>
+              <span>Inspect Time (ms)</span>
             </div>
             <div class="right">
               <input type="text" placeholder="550" maxlength="4" class="inspect-duration-value" />
@@ -536,7 +560,7 @@
           <div class="option custom">
             <div class="left experimental">
               <span>Custom Inspect Keybind</span>
-              <span class="description">animations are subject to change</span>
+              <span class="description">Animations may change</span>
             </div>
             <button class="juice change-keybind inspect"></button>
           </div>
@@ -544,7 +568,7 @@
         <div class="option" style="align-items:flex-start;">
           <div class="option-group" style="width:calc(50% - 0.5rem);">
             <div class="option">
-              <span>Wireframe Weapon</span>
+              <span>Gun Wireframe</span>
               <div class="checkbox">
                 <input type="checkbox" id="weapon_wireframe" data-setting="weapon_wireframe" />
                 <label for="weapon_wireframe"></label>
@@ -553,7 +577,7 @@
             <div class="option dropdown">
               <div class="option top" style="width:100%">
                 <i class=" fas fa-angle-down"></i>
-                <span style="margin-right:auto">Weapon Color</span>
+                <span style="margin-right:auto">Gun Color</span>
                 <div class="checkbox">
                   <input type="checkbox" id="weapon_color" data-setting="weapon_color" />
                   <label for="weapon_color"></label>
@@ -569,7 +593,7 @@
                   </div>
                 </div>
                 <div class="option">
-                  <span>Rainbow</span>
+                  <span>Rainbow Gun</span>
                   <div class="checkbox">
                     <input type="checkbox" id="weapon_rainbow" data-setting="weapon_rainbow" />
                     <label for="weapon_rainbow"></label>
@@ -580,7 +604,7 @@
           </div>
           <div class="option-group" style="width:calc(50% - 0.5rem); margin-bottom:0">
             <div class="option">
-              <span>Wireframe Arm</span>
+              <span>Arm Wireframe</span>
               <div class="checkbox">
                 <input type="checkbox" id="arm_wireframe" data-setting="arm_wireframe" />
                 <label for="arm_wireframe"></label>
@@ -605,7 +629,7 @@
                   </div>
                 </div>
                 <div class="option">
-                  <span>Rainbow</span>
+                  <span>Rainbow Arm</span>
                   <div class="checkbox">
                     <input type="checkbox" id="arm_rainbow" data-setting="arm_rainbow" />
                     <label for="arm_rainbow"></label>
@@ -618,7 +642,7 @@
         <div class="option" style="align-items:flex-start;">
           <div class="option-group" style="width:calc(50% - 0.5rem);">
             <div class="option per-weapon">
-              <span style="white-space:nowrap">Weapon size</span>
+              <span style="white-space:nowrap">Gun Size</span>
               <div class="right">
                 <input type="text" placeholder="1" maxlength="4" class="weapon-size-value" />
                 <input type="range" min="0" max="2" step="0.05" class="range weapon-size"
@@ -628,7 +652,7 @@
             <div class="option dropdown">
               <div class="top per-weapon">
                 <i class="fas fa-angle-down"></i>
-                <span>Weapon Offset</span>
+                <span>Gun Offset</span>
               </div>
               <div class="content">
                 <div class="option inner">X
@@ -657,7 +681,7 @@
             <div class="option dropdown">
               <div class="top per-weapon">
                 <i class="fas fa-angle-down"></i>
-                <span>Weapon Rotation</span>
+                <span>Gun Spin</span>
               </div>
               <div class="content">
                 <div class="option inner">X
@@ -685,15 +709,15 @@
             </div>
             <div class="option">
               <button id="reset-weapon-settings" class="juice-button large">
-                <div class="text">Reset Weapon Settings</div>
-                <span class="description"> This action cannot be undone</span>
+                <div class="text">Reset Gun Settings</div>
+                <span class="description">Permanent. No re-dos.</span>
                 <div class="custom-border"></div>
               </button>
             </div>
           </div>
           <div class="option-group" style="width:calc(50% - 0.5rem); margin-bottom:0;">
             <div class="option per-weapon">
-              <span>Arm size</span>
+              <span>Arm Size</span>
               <div class="right">
                 <input type="text" placeholder="1" maxlength="4" class="arm-size-value" />
                 <input type="range" min="0" max="2" step="0.05" class="range arm-size"
@@ -732,7 +756,7 @@
             <div class="option dropdown">
               <div class="top per-weapon">
                 <i class="fas fa-angle-down"></i>
-                <span>Arm Rotation</span>
+                <span>Arm Spin</span>
               </div>
               <div class="content">
                 <div class="option inner">X
@@ -761,7 +785,7 @@
             <div class="option">
               <button id="reset-arm-settings" class="juice-button large">
                 <div class="text">Reset Arm Settings</div>
-                <span class="description"> This action cannot be undone</span>
+                <span class="description">Permanent. No re-dos.</span>
                 <div class="custom-border"></div>
               </button>
             </div>
@@ -828,12 +852,10 @@
         </div>
       </div>
     </div>
-    <div id="performance-options" class="juice options">
-      <div class="option-group">
-        <div class="option">
-          <span>FPS Cap</span>
-          <span class="description">Cap the page below your display's refresh rate (values at/above it are no-ops — producing frames faster than the panel physically refreshes only drops frames). On a 60Hz display, only 30 is a real cap.</span>
-          <div class="custom-select">
+    <div id="performance-options" class="juice options"><div class="grid">
+      <div class="option-group wide>
+<div class="group-title">Frames</div>
+        <div class="option"><div class="left"><span>FPS Cap</span><span class="description">Capping above your panel's Hz just burns frames for nothing. On 60Hz, only 30 really bites.</span></div><div class="custom-select">
             <select id="fps_cap" data-setting="fps_cap">
               <option value="0">No cap (default)</option>
               <option value="30">30 FPS</option>
@@ -844,10 +866,7 @@
             </select>
           </div>
         </div>
-        <div class="option">
-          <span>Logic Tick Rate</span>
-          <span class="description">EXPERIMENTAL — overclocks the game's internal 60Hz simulation loop (prediction, interpolation, bhop timing). This is the compositor-independent way to get the old client's feel: rendering is still limited by your display, only the engine gets faster. If the world moves at 2x speed, set back to 60.</span>
-          <div class="custom-select">
+        <div class="option"><div class="left"><span>Sim Tick</span><span class="description">Overclocks the engine's tick (bhop + interp) without a fancy monitor. World running 2× fast? Drop back to 60.</span></div><div class="custom-select">
             <select id="logic_tick_rate" data-setting="logic_tick_rate">
               <option value="60">60 Hz (stock)</option>
               <option value="120">120 Hz</option>
@@ -856,10 +875,12 @@
             </select>
           </div>
         </div>
-        <div class="option requires-restart">
-          <span>Engine Profile</span>
-          <span class="description">RESEARCH MODE — A/B compositor configs (see RESEARCH-UNCAP-MACOS.md). stock = verified smooth 60. uncap* = the old client's 500fps flags on modern Chromium — known to be able to wreck presentation on this panel, so measure before believing.</span>
-          <div class="custom-select">
+        <div class="option"><div class="left"><span>Interp Delay</span><span class="description">How far behind server time enemies render. Lower = snappier but twitchy. Higher = buttery. 75ms is the ranked default.</span></div><div class="right">
+            <input type="text" placeholder="75" maxlength="3" class="value interp-delay" data-setting="interp_delay_ms" />
+            <input type="range" min="50" max="200" step="5" class="range interp-delay" data-setting="interp_delay_ms" />
+          </div>
+        </div>
+        <div class="option"><div class="left requires-restart"><span>Compositor Profile</span><span class="description">Bench-lab for frame pacing. stock is the smooth verified ride; uncap* uncorks the old client's flags — can look worse, so test with your eyes.</span></div><div class="custom-select">
             <select id="engine_profile" data-setting="engine_profile">
               <option value="stock">Stock (verified smooth)</option>
               <option value="uncap">Uncap (old-client flags)</option>
@@ -871,14 +892,15 @@
           </div>
         </div>
         <div class="option requires-restart">
-          <span>In Process GPU</span>
+          <span>In-Process GPU</span>
           <div class="checkbox">
             <input type="checkbox" id="in_process_gpu" data-setting="in_process_gpu" />
             <label for="in_process_gpu"></label>
           </div>
         </div>
       </div>
-      <div class="option-group">
+      <div class="option-group wide>
+<div class="group-title">Smart Modes</div>
         <div class="option requires-restart">
           <span>Auto Fullscreen</span>
           <div class="checkbox">
@@ -886,8 +908,18 @@
             <label for="auto_fullscreen"></label>
           </div>
         </div>
+        <div class="option"><div class="left"><span>Thermal Guard</span><span class="description">M4 Air has no fan. CPU pinned 80%+ for ~30s mid-match? It downshifts your tick (480→240→120) till it cools, then re-ups after ~3 min. No thermal throttle, gg.</span></div><div class="switch">
+            <input type="checkbox" id="thermal_guard" data-setting="thermal_guard" />
+            <label for="thermal_guard"></label>
+          </div>
+        </div>
+        <div class="option"><div class="left"><span>High Refresh Auto</span><span class="description">Plug in a 120Hz+ panel and your FPS cap + tick climb with it; unplug and it drops back. Sits quiet on the built-in 60Hz.</span></div><div class="switch">
+            <input type="checkbox" id="high_refresh_auto" data-setting="high_refresh_auto" />
+            <label for="high_refresh_auto"></label>
+          </div>
+        </div>
       </div>
-    </div>
+    </div></div></div>
     <div id="client-options" class="juice options">
       <div id="inner-tabs" class="juice tabs">
         <div data-tab="general" class="juice inner-tab active">
@@ -899,23 +931,21 @@
           Appearance
         </div>
       </div>
-      <div id="general-options" class="juice options inner active">
+      <div id="general-options" class="juice options inner active"><div class="grid">
         <div class="option-group">
+<div class="group-title">System</div>
           <div class="option">
             <div class="left">
               <div>
-                <span>Auto Updater</span>
+                <span>Auto Update</span>
                 <div class="info-wrapper">
                   <div class="info-btn">?</div>
                   <div class="info-tooltip">
-                    The Auto Updater toggle was added in version 1.3.0, meaning turning it off and downgrading to an
-                    even older version will still auto update to the newest.
+                    Heads up: this toggle shipped in 1.3.0, so even if you turn it off and roll back further than that, it'll still yank you forward to the newest.
                   </div>
                 </div>
               </div>
-              <span class="description">
-                Only works for windows users
-              </span>
+              <span class="description">Windows only</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="auto_update" data-setting="auto_update" />
@@ -924,10 +954,8 @@
           </div>
           <div class="option">
             <div class="left requires-restart">
-              <span>Discord Activity</span>
-              <span class="description">
-                Display Dawn Client as your Discord activity
-              </span>
+              <span>Discord Presence</span>
+              <span class="description">Show Dawn on your Discord profile</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="discord_rpc" data-setting="discord_rpc" />
@@ -936,21 +964,18 @@
           </div>
           <div class="option custom">
             <div class="left">
-              <span>Menu Toggle Keybind</span>
-              <span class="description">
-                Customizable keybind to toggle the menu
-              </span>
+              <span>Menu Keybind</span>
+              <span class="description">The key that summons this menu</span>
             </div>
             <button class="juice change-keybind menu"></button>
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">Your Brand</div>
           <div class="option local-customizations">
             <div class="left requires-refresh">
-              <span>Local Customizations</span>
-              <span class="description">
-                Make your own gradient and badges that only you can see
-              </span>
+              <span>Local Swag</span>
+              <span class="description">Craft a gradient + badges only you see</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="local_customizations" data-setting="local_customizations" />
@@ -966,7 +991,7 @@
               <div class="option animated">
                 <div class="left">
                   <span>Animated Gradient</span>
-                  <div class="description">Disable if you're having performance decreases</div>
+                  <div class="description">Kill it if your FPS tanks</div>
                 </div>
                 <div class="checkbox">
                   <input type="checkbox" id="local_animated_gradient" data-setting="local_animated_gradient" />
@@ -975,7 +1000,7 @@
               </div>
               <div class="option shadow">
                 <div class="left">
-                  <span>Gradient Text Shadow</span>
+                  <span>Gradient Shadow</span>
                 </div>
                 <div class="right"
                   style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; width: 60%;">
@@ -1047,10 +1072,11 @@
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">News Feed</div>
           <div class="option">
             <div class="left requires-refresh">
               <span>General News</span>
-              <span class="description">Dawn-related news</span>
+              <span class="description">Dawn-side news</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="general_news" data-setting="general_news" />
@@ -1059,8 +1085,8 @@
           </div>
           <div class="option">
             <div class="left requires-refresh">
-              <span>Promotional News</span>
-              <span class="description">Live events (has a "LIVE" indicator)</span>
+              <span>Promo News</span>
+              <span class="description">Live events — hunt the LIVE tag</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="promotional_news" data-setting="promotional_news" />
@@ -1070,7 +1096,7 @@
           <div class="option">
             <div class="left requires-refresh">
               <span>Event News</span>
-              <span class="description">Events that you can participate in</span>
+              <span class="description">Events you can actually enter</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="event_news" data-setting="event_news" />
@@ -1080,7 +1106,7 @@
           <div class="option">
             <div class="left requires-refresh">
               <span>Alerts</span>
-              <span class="description">Important alerts mainly posted by Kirka Staff</span>
+              <span class="description">Big heads-ups from Kirka staff</span>
             </div>
             <div class="checkbox">
               <input type="checkbox" id="alert_news" data-setting="alert_news" />
@@ -1089,6 +1115,7 @@
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">Server Proxy</div>
           <div class="option requires-refresh">
             <span>Proxy URL</span>
             <select id="base_url" data-setting="base_url">
@@ -1101,6 +1128,7 @@
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">Tools</div>
           <div class="option">
             <button id="open-swapper-folder" class="juice-button">
               <span class="text">Open Swapper Folder</span>
@@ -1123,32 +1151,32 @@
           </div>
           <div class="option">
             <button id="reset-juice-settings" class="juice-button large">
-              <span class="text">Reset Dawn Client Settings</span>
-              <span class="description"> This action cannot be undone</span>
+              <span class="text">Factory Reset</span>
+              <span class="description">Permanent. No re-dos.</span>
               <div class="custom-border"></div>
             </button>
           </div>
           <div class="option">
             <button id="reset-menu-size" class="juice-button large">
-              <span class="text">Reset Menu Position</span>
-              <span class="description"> Reloads Client</span>
+              <span class="text">Reset Menu Size + Spot</span>
+              <span class="description">Resets size + spot, then reloads</span>
               <div class="custom-border"></div>
             </button>
           </div>
           <div class="option">
             <button id="remote-to-static-links" class="juice-button large requires-refresh">
-              <span class="test">Replace Remote Links with Static Links</span>
+              <span class="test">Cache Remote Files</span>
               <span class="description">
-                This will speed up your customizations. This action cannot be
-                undone
+                Grabs local copies of your remote files so they load faster. One-way trip.
               </span>
               <div class="custom-border"></div>
             </button>
           </div>
         </div>
-      </div>
-      <div id="appearance-options" class="juice options inner">
+      </div></div></div>
+      <div id="appearance-options" class="juice options inner"><div class="grid">
         <div class="option-group">
+<div class="group-title">Theme</div>
           <div class="option">
             <span>Menu Theme</span>
             <select id="menu_theme" data-setting="menu_theme">
@@ -1161,35 +1189,36 @@
           </div>
         </div>
         <div class="option-group" id="custom-theme-settings" style="display:none">
+<div class="group-title">Custom Colors</div>
           <div class="option">
             <div class="left">
               <span>Custom Theme Colors</span>
-              <span class="description">These settings only apply when "Custom" theme is selected</span>
+              <span class="description">Only matters when the Custom theme is picked</span>
             </div>
           </div>
           <div class="option">
-            <span>Primary Color</span>
+            <span>Primary</span>
             <div class="color-input">
               <input type="text" class="hex custom-primary-color" placeholder="#ADBBFF" maxlength="7" data-setting="custom_primary_color" />
               <input type="color" class="color-picker custom-primary-color" data-setting="custom_primary_color" />
             </div>
           </div>
           <div class="option">
-            <span>Background Color</span>
+            <span>Background</span>
             <div class="color-input">
               <input type="text" class="hex custom-background-color" placeholder="#171717" maxlength="7" data-setting="custom_background_color" />
               <input type="color" class="color-picker custom-background-color" data-setting="custom_background_color" />
             </div>
           </div>
           <div class="option">
-            <span>Text Color</span>
+            <span>Text</span>
             <div class="color-input">
               <input type="text" class="hex custom-text-color" placeholder="#D4D4D4" maxlength="7" data-setting="custom_text_color" />
               <input type="color" class="color-picker custom-text-color" data-setting="custom_text_color" />
             </div>
           </div>
           <div class="option">
-            <span>Border Color</span>
+            <span>Border</span>
             <div class="color-input">
               <input type="text" class="hex custom-border-color" placeholder="#FFFFFF" maxlength="7" data-setting="custom_border_color" />
               <input type="color" class="color-picker custom-border-color" data-setting="custom_border_color" />
@@ -1197,6 +1226,7 @@
           </div>
         </div>
         <div class="option-group">
+<div class="group-title">Look + Feel</div>
           <div class="option">
             <span>Corner Roundness</span>
             <div class="right">
@@ -1204,8 +1234,6 @@
               <input type="range" min="0" max="64" step="1" class="range corner-roundness" data-setting="corner_roundness">
             </div>
           </div>
-        </div>
-        <div class="option-group">
           <div class="option">
             <span>Menu Opacity</span>
             <div class="right">
@@ -1213,8 +1241,6 @@
               <input type="range" min="0" max="100" step="1" class="range menu-opacity" data-setting="menu_opacity">
             </div>
           </div>
-        </div>
-        <div class="option-group">
           <div class="option">
             <span>Menu Blur</span>
             <div class="right">
@@ -1223,26 +1249,27 @@
             </div>
           </div>
         </div>
-      </div>
+      </div></div></div>
     </div>
-    <div id="scripts-options" class="juice options">
+    <div id="scripts-options" class="juice options"><div class="grid">
       <div class="option-group">
+<div class="group-title">Auto-Opener</div>
         <div class="option">
           <div class="left">
-            <span>Pack/Chest Opener</span>
-            <span class="description">Refresh to stop</span>
+            <span>Pack Opener</span>
+            <span class="description">Reload to stop the spam</span>
           </div>
           <select id="opener">
           </select>
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Skins</div>
         <div>
           <div class="option">
             <div class="left requires-restart" id="title-option">
-              <span>Skin Changer</span>
-              <div class="description">Swaps the <span style="font-weight: bolder">default</span> skin of the selected
-                weapon with your own
+              <span>Skin Swapper</span>
+              <div class="description">Puts your own texture on the selected gun's <span style="font-weight: bolder">default</span> skin
               </div>
             </div>
           </div>
@@ -1264,18 +1291,18 @@
           </div>
           <div class="option">
             <div class="left">
-              <span>Upload image</span>
-              <span class="description">Accepts .webp, .png, .jpg and .jpeg</span>
+              <span>Drop Skin</span>
+              <span class="description">Takes .webp / .png / .jpg / .jpeg</span>
               <input type="file" id="skin-file" accept=".webp, .png, .jpg, .jpeg" style="display: none;" />
             </div>
             <div class="juice-button" id="upload-skin" onclick="document.getElementById('skin-file').click()">
               <span>Select file</span>
-              <div class="description">Or drag and drop</div>
+              <div class="description">Or drag one in</div>
             </div>
           </div>
           <div class="option" id="load-from-url">
             <div class="left">
-              <span>OR Load from URL</span>
+              <span>Or Load from URL</span>
             </div>
             <input type="text" id="file-url" placeholder="https://..." />
           </div>
@@ -1289,10 +1316,11 @@
         </div>
       </div>
       <div class="option-group">
+<div class="group-title">Sounds</div>
         <div class="option">
           <div class="left requires-restart">
             <span>Sound Swapper</span>
-            <span class="description">Swap the selected sound with your own</span>
+            <span class="description">Swap any game sound for your own</span>
           </div>
         </div>
         <div class="option">
@@ -1326,11 +1354,11 @@
           </select>
         </div>
         <div class="option">
-          <span>Upload .mp3</span>
+          <span>Drop .mp3</span>
           <input type="file" id="sound-file" accept=".mp3" style="display: none;" />
           <div class="juice-button" id="upload-sound" onclick="document.getElementById('sound-file').click()">
             <span>Select file</span>
-            <div class="description">Or drag and drop</div>
+            <div class="description">Or drag one in</div>
           </div>
         </div>
         <div class="option">
@@ -1348,7 +1376,7 @@
           <button id="open-sounds-folder" class="juice-button">Open Sounds Folder</button>
         </div>
       </div>
-    </div>
+    </div></div></div>
     <div id="about-client" class="juice options">
       <div class="option-group">
         <div class="option">
