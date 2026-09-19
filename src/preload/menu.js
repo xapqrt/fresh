@@ -114,11 +114,8 @@ class Menu {
   setKeybind() {
     const kbEl = this.menu.querySelector(".keybind");
     if (kbEl) kbEl.innerText = `Press ${this.settings.menu_keybind || "ShiftRight"} to toggle menu`;
-    if (!this.localStorage.getItem("juice-menu")) {
-      this.localStorage.setItem("juice-menu", this.menuToggle.getAttribute("data-active"));
-    } else {
-      this.menuToggle.setAttribute("data-active", this.localStorage.getItem("juice-menu"));
-    }
+    // Always start hidden. Never restore persisted open-state.
+    this.menuToggle.setAttribute("data-active", "false");
   }
 
   dragMenu() {
@@ -368,13 +365,9 @@ class Menu {
     if (btnMin) {
       btnMin.addEventListener("click", (e) => {
         e.stopPropagation();
-        const minimized = menu.getAttribute("data-minimized") === "true";
-        if (!minimized) {
-          // keep the menu where it is, just roll it up
-          menu.setAttribute("data-expanded", "false");
-          if (btnExpand) btnExpand.classList.remove("active");
-        }
-        menu.setAttribute("data-minimized", String(!minimized));
+        menu.setAttribute("data-minimized", "false");
+        menu.setAttribute("data-active", "false");
+        this.localStorage.setItem("juice-menu", "false");
       });
     }
 
@@ -1184,22 +1177,30 @@ class Menu {
       if (!isActive) {
         document.exitPointerLock();
       }
-      this.menuToggle.setAttribute("data-active", !isActive);
-      this.localStorage.setItem("juice-menu", !isActive);
-      if (!isActive) {
+      const nextActive = !isActive;
+      this.menuToggle.setAttribute("data-active", String(nextActive));
+      this.localStorage.setItem("juice-menu", String(nextActive));
+      if (nextActive) {
         this.loadPatchStatus();
       }
     });
 
     document.addEventListener("keydown", (e) => {
-      if (e.code === this.settings.menu_keybind) {
+      const targetKey = this.settings.menu_keybind || "ShiftRight";
+      const matches =
+        e.code === targetKey ||
+        (targetKey === "Shift" && (e.code === "ShiftLeft" || e.code === "ShiftRight")) ||
+        (targetKey === "ShiftRight" && e.code === "ShiftRight");
+
+      if (matches) {
         const isActive = this.menuToggle.getAttribute("data-active") === "true";
         if (!isActive) {
           document.exitPointerLock();
         }
-        this.menuToggle.setAttribute("data-active", !isActive);
-        this.localStorage.setItem("juice-menu", !isActive);
-        if (!isActive) {
+        const nextActive = !isActive;
+        this.menuToggle.setAttribute("data-active", String(nextActive));
+        this.localStorage.setItem("juice-menu", String(nextActive));
+        if (nextActive) {
           this.loadPatchStatus();
         }
       }
