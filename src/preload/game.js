@@ -1,3 +1,160 @@
+// ── Sub-millisecond timer pump ────────────────────────────────────────────
+// Chromium clamps NESTED setTimeout/setInterval to ≥4ms (HTML spec).
+// Kirka's main loop is a self-scheduling setTimeout(1000/fps) — at 480Hz
+// that means setTimeout(2.08ms), which would otherwise clamp to 4ms
+// → ~250Hz max loop rate → the overclock never actually reaches 480.
+//
+// The standard workaround (used by aimer.pro, Benchmark.js, and every
+// high-precision timing library) is to route short-timeout callbacks
+// through a MessageChannel postMessage, which bypasses the clamp and
+// fires at sub-millisecond latency. We install this before page scripts
+// run so the game's own setTimeout picks it up automatically.
+(function installSubMsTimerPump() {
+  try {
+    // Activate when the user asks for >=144Hz tick (delay ≤ ~6.9ms). Below
+    // that the setTimeout delay is above Chrome's 4ms clamp and the native
+    // timer is perfectly adequate.
+    const _settings = (() => { try { return require('electron').ipcRenderer.sendSync('get-settings'); } catch(e) { return {}; } })();
+    const tickRate = Number(_settings.logic_tick_rate) || 60;
+    if (tickRate < 144) return;
+
+    const _realSetTimeout = window.setTimeout;
+    const _realSetInterval = window.setInterval;
+    const _realClearTimeout = window.clearTimeout;
+    const _realClearInterval = window.clearInterval;
+    const { port1, port2 } = new MessageChannel();
+    const queue = [];
+    let seq = 0;
+    let recurseGuard = false;
+
+    port1.onmessage = () => {
+      if (recurseGuard) return;
+      recurseGuard = true;
+      try {
+        const now = performance.now();
+        let i = 0;
+        while (i < queue.length) {
+          const job = queue[i];
+          if (job.cleared) { queue.splice(i, 1); continue; }
+          if (job.deadline <= now) {
+            queue.splice(i, 1);
+            try { job.cb.apply(window, job.args); } catch (e) { console.error(e); }
+          } else {
+            i++;
+          }
+        }
+      } finally {
+        recurseGuard = false;
+      }
+      // If anything remains due soon (<4ms), kick another postMessage to
+      // spin immediately; longer delays use native setTimeout to save CPU.
+      if (queue.length) {
+        const next = queue.reduce((m, j) => Math.min(m, j.deadline - performance.now()), Infinity);
+        if (next <= 1) port2.postMessage(0);
+        else _realSetTimeout(() => port2.postMessage(0), Math.max(0, next));
+      }
+    };
+
+    function fastSetTimeout(cb, delay, ...args) {
+      const d = Math.max(0, Number(delay) || 0);
+      if (d >= 4) return _realSetTimeout(cb, d, ...args);
+      const id = ++seq;
+      const job = { id, cb, args, deadline: performance.now() + d, cleared: false };
+      queue.push(job);
+      port2.postMessage(0);
+      return id;
+    }
+
+    function fastClearTimeout(id) {
+      const job = queue.find(j => j.id === id);
+      if (job) job.cleared = true;
+      else _realClearTimeout(id);
+    }
+
+    window.setTimeout = fastSetTimeout;
+    window.clearTimeout = fastClearTimeout;
+    window.setInterval = function (cb, delay, ...args) {
+      const d = Math.max(0, Number(delay) || 0);
+      const id = { value: null };
+      const tick = () => {
+        try { cb.apply(window, args); } catch (e) { console.error(e); }
+        id.value = fastSetTimeout(tick, d);
+      };
+      id.value = fastSetTimeout(tick, d);
+      return id;
+    };
+    window.clearInterval = function (id) {
+      if (id && id.value != null) fastClearTimeout(id.value);
+      else _realClearInterval(id);
+    };
+    console.log(`[dawn-timer] sub-ms setTimeout pump enabled (tick ${tickRate}Hz)`);
+  } catch (e) { console.warn('[dawn-timer] pump failed:', e); }
+})();
+
+// ── Raw (unaccelerated) mouse in pointer lock ────────────────────────────
+// Chromium's PointerLockOptions lets us request unadjustedMovement which
+// skips Windows' "Enhance pointer precision" acceleration and the macOS
+// mouse curve — this is the #1 cause of "sluggish" vs aimer.pro feel,
+// because aimer.pro runs with `unadjustedMovement: true` on its canvas
+// requestPointerLock call. We intercept every requestPointerLock and
+// force unadjustedMovement:true.
+(function installRawMouse() {
+  try {
+    const _origRPL = Element.prototype.requestPointerLock;
+    Element.prototype.requestPointerLock = function (opts) {
+      const o = Object.assign({}, opts || {}, { unadjustedMovement: true });
+      let r;
+      try {
+        r = _origRPL.call(this, o);
+      } catch (e) {
+        // Old signature that rejects unknown options outright.
+        return _origRPL.call(this, opts);
+      }
+      // Chrome 111+ returns a Promise. If raw/unadjusted movement is
+      // unsupported the lock is REJECTED — left unhandled that would leave
+      // the game with no pointer lock at all (mouse feels broken). Fall
+      // back to a plain lock so aiming always works.
+      if (r && typeof r.then === "function") {
+        return r.catch(() => _origRPL.call(this, opts));
+      }
+      return r;
+    };
+    console.log('[dawn-input] unadjustedMovement forced on pointer lock (with plain fallback)');
+  } catch (e) { console.warn('[dawn-input] raw mouse install failed:', e); }
+})();
+
+// ── Desynchronized canvas (Windows/Linux only) ────────────────────────────
+// macOS ANGLE/Metal has a confirmed desynchronized → WindowServer stall
+// (see weapon-hook.js note). On Windows/Linux this removes one buffer-swap
+// of presentation latency — exactly the switch aimer.pro uses for the
+// "super smooth at 480fps" feel. We wrap getContext BEFORE the weapon-mods
+// hook runs so the canvas is created with desynchronized:true from the
+// start (you can't change it after context creation).
+(function installDesynchronizedCanvas() {
+  const platform = (() => {
+    try { return require('os').platform(); } catch (e) {
+      return navigator.platform && /mac/i.test(navigator.platform) ? 'darwin' : 'win32';
+    }
+  })();
+  if (platform === 'darwin') return;
+
+  const _origGetCtx = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    if (type === 'webgl' || type === 'webgl2') {
+      const a = Object.assign({}, attrs || {}, {
+        desynchronized: true,
+        powerPreference: 'high-performance',
+      });
+      // Preserve the caller's antialias/preferencs if set.
+      if (attrs && 'antialias' in attrs) a.antialias = attrs.antialias;
+      if (attrs && 'alpha' in attrs) a.alpha = attrs.alpha;
+      return _origGetCtx.call(this, type, a);
+    }
+    return _origGetCtx.call(this, type, attrs);
+  };
+  console.log('[dawn-canvas] desynchronized: true enabled for WebGL (non-macOS)');
+})();
+
 // Sanitize Block RGB settings
 function sanitizeBlockRgbSettings() {
   try {
@@ -181,7 +338,9 @@ const settings = ipcRenderer.sendSync("get-settings");
 // round-trip on every call (several pollers paid one per second).
 ipcRenderer.on("settings-updated", (s) => { if (s) Object.assign(settings, s); });
   // Boot-time value for the patched game loop (logic tick overclock).
-  window.__dawnTickMul = Math.max(1, Number(settings.logic_tick_rate) / 60) || 1;
+  window.__dawnUserTick = Number(settings.logic_tick_rate) || 60;
+  window.__dawnThermalTick = null;
+  window.__dawnTickMul = Math.max(1, (window.__dawnThermalTick || window.__dawnUserTick) / 60) || 1;
   // Boot-time value for interpolation delay slider (ms).
   window.__dawnInterpDelayMs = Number(settings.interp_delay_ms) || 75;
   const base_url = settings.base_url;
@@ -6062,7 +6221,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       case "logic_tick_rate":
         // Read by the dawn-patched game loop on every re-schedule (live).
-        window.__dawnTickMul = Math.max(1, Number(value) / 60) || 1;
+        window.__dawnUserTick = Number(value) || 60;
+        window.__dawnTickMul = Math.max(1, (window.__dawnThermalTick || window.__dawnUserTick) / 60) || 1;
         break;
 
       case "interp_delay_ms":
@@ -6131,6 +6291,20 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   ipcRenderer.on("url-change", handleUrlChange);
+
+  // Thermal guard → runtime-only tick override. It NEVER rewrites the saved
+  // "Logic Tick Rate" setting, so your choice of 480 survives restarts; the
+  // guard just pulls the effective rate back temporarily when the fanless
+  // M4 gets hot, and restores it (to YOUR value) once CPU recovers.
+  ipcRenderer.on("thermal-tick-override", (_e, tick) => {
+    window.__dawnThermalTick = tick ? Number(tick) : null;
+    const user = window.__dawnUserTick || 60;
+    window.__dawnTickMul = Math.max(1, (window.__dawnThermalTick || user) / 60) || 1;
+    console.log(
+      `[dawn] tick -> ${window.__dawnTickMul * 60}Hz` +
+        (window.__dawnThermalTick ? ` (thermal override; your setting is ${user}Hz)` : "")
+    );
+  });
 
   const handleInitialLoad = () => {
     const url = window.location.href;

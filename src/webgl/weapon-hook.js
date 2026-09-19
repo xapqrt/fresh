@@ -2,6 +2,13 @@ const { isArmSig, getArmType, TOMAHAWK_SIG } = require('./arm-sigs');
 const { applyZSpin, applyXSpin, applyYSpin, hsvToRgb } = require('./mat-utils');
 const wasm = require('../wasm/dawn_wasm');
 
+// Platform detection — process.platform is readable in the preload.
+const processPlatform = (() => {
+  try { return require('os').platform(); } catch (e) {
+    return navigator.platform && navigator.platform.toLowerCase().includes('mac') ? 'darwin' : 'win32';
+  }
+})();
+
 const _matBuf = wasm.getScratchBuf();
 const _matBufI32 = new Int32Array(_matBuf.buffer, _matBuf.byteOffset, _matBuf.length);
 const _rgbPixel = new Uint8Array(4);
@@ -310,9 +317,21 @@ const hookWebGL = () => {
     const isGameCanvas =
       this.id === 'game' || this.id === 'gameCanvas' ||
       (!_gameContext && (type === 'webgl' || type === 'webgl2') && this.width > 100 && this.height > 100);
-    // On macOS with ANGLE Metal, desynchronized: true causes severe compositor stutter
-    // and lock contention with WindowServer. Keep standard buffered presentation.
-    const ctx = origGetCtx.call(this, type, attrs);
+    // On macOS with ANGLE Metal, desynchronized: true causes severe compositor
+    // stutter and lock contention with WindowServer → keep buffered present.
+    // On Windows/Linux desynchronized is a FREE latency win (one fewer
+    // compositor frame of queueing → ~1 frame less mouse-to-photons latency,
+    // the exact same flag aimer.pro uses for its "super smooth" feel).
+    let effectiveAttrs = attrs;
+    if (isGameCanvas && (type === 'webgl' || type === 'webgl2') && processPlatform !== 'darwin') {
+      effectiveAttrs = Object.assign({}, attrs || {}, {
+        desynchronized: true,
+        powerPreference: 'high-performance',
+        failIfMajorPerformanceCaveat: false,
+        antialias: attrs && 'antialias' in attrs ? attrs.antialias : false,
+      });
+    }
+    const ctx = origGetCtx.call(this, type, effectiveAttrs);
     if (!ctx || (type !== 'webgl' && type !== 'webgl2')) return ctx;
     if (!isGameCanvas || _gameContext) return ctx;
 

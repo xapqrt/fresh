@@ -66,6 +66,27 @@ function applySwitches() {
       String(Math.min(Math.max(num_raster_threads | 0, 1), 8)));
   }
 
+  // ── Low-latency / high-fps graphics pipeline ─────────────────────────────
+  // Safe on macOS ANGLE Metal (the M4 Air path) + Windows D3D. Zero-copy and
+  // GPU rasterization cut texture-upload and tile-raster overhead. Raw
+  // pointer input + pointer-lock options remove one frame of mouse-look
+  // latency and disable OS pointer acceleration in lock. Canvas OOP
+  // rasterization moves canvas work to the GPU process (less main-thread
+  // contention). Force sRGB kills an unnecessary color-management pass.
+  app.commandLine.appendSwitch("enable-zero-copy");
+  app.commandLine.appendSwitch("enable-gpu-rasterization");
+  app.commandLine.appendSwitch("enable-features",
+    "ParallelDownloading,RawPointerEvents,PointerLockOptions,CanvasOopRasterization");
+  app.commandLine.appendSwitch("force-color-profile", "srgb");
+  app.commandLine.appendSwitch("disable-touch-events");
+  // Raise the GPU watchdog timeout so a long frame (common at 480Hz tick
+  // on the M4) doesn't kill the GPU process mid-match.
+  app.commandLine.appendSwitch("gpu-watchdog-timeout-seconds", "60");
+  // Ensure the renderer's timer resolution doesn't get clamped to 15ms by
+  // background-throttling heuristics during pointer-lock.
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+
   // ── Engine profile (restart required) ─────────────────────────────────────
   // Profiles that start with "uncap" add the old client's two flags.
   // Variants change the presentation path so one of them may survive on
@@ -84,10 +105,6 @@ function applySwitches() {
     app.commandLine.appendSwitch("in-process-gpu");
   }
 
-  let disableFeatures =
-    "CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache,Translate,MediaRouter,TrackingPrevention,ThirdPartyStoragePartitioning,Tpcd,TpcdMitigations";
-  if (engine_profile === "uncap_legacy_skia") disableFeatures += ",UseSkiaRenderer";
-
   // ── GPU backend ───────────────────────────────────────────────────────────
   if (engine_profile === "uncap_gl") {
     // Native GL (CGL) presentation path instead of the CAMetalLayer
@@ -98,14 +115,17 @@ function applySwitches() {
     app.commandLine.appendSwitch("use-angle", "metal");
   }
 
+  // Disable features we don't want running (these regress input latency or
+  // cause throttling). Add UseSkiaRenderer for the legacy-skia profile.
+  let _df = "CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,BackForwardCache," +
+    "Translate,MediaRouter,TrackingPrevention,ThirdPartyStoragePartitioning," +
+    "Tpcd,TpcdMitigations";
+  if (engine_profile === "uncap_legacy_skia") _df += ",UseSkiaRenderer";
+  app.commandLine.appendSwitch("disable-features", _df);
+
   app.commandLine.appendSwitch("disable-gpu-process-crash-limit");
 
   app.commandLine.appendSwitch("disable-background-timer-throttling");
-  app.commandLine.appendSwitch("disable-renderer-backgrounding");
-  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
-
-  app.commandLine.appendSwitch("enable-features", "ParallelDownloading");
-  app.commandLine.appendSwitch("disable-features", disableFeatures);
 
   app.commandLine.appendSwitch("disable-blink-features",
     "ThirdPartyStoragePartitioning,TrustedTypes");
