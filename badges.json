@@ -410,6 +410,7 @@
   },
   {
     "shortId": "SO1HQM",
+    "profile-background": "https://i.imgur.com/aYaXYTd.png",
     "gradient": {
       "rot": "to right",
       "stops": [
@@ -492,12 +493,12 @@
       "stops": [
         "#dfb1d4",
         "#dfb1d4"
-      ]
+      ],
+      "shadow": "0px 0px 20px #dfb1d4"
     }
   },
   {
     "shortId": "1110KH",
-    "profile-background": "https://i.imgur.com/69eti5A.png",
     "gradient": {
       "rot": "to right",
       "stops": [
@@ -581,18 +582,16 @@
   },
   {
     "shortId": "XMNVRX",
-    "animated": true,
     "gradient": {
       "rot": "90deg",
       "stops": [
-        "#00FF00 0%",
-        "#0000FF 50%",
-        "#FFFF00 100%"
-      ]
+        "#94244B 0%",
+        "#94244B 100%"
+      ],
+      "shadow": "0px 0px 32px #4e1328"
     },
     "badges": [
-      "https://i.imgur.com/OGxRl68.png",
-      "https://i.imgur.com/kNCEePB.png"
+      "https://i.imgur.com/bviusvX.png"
     ]
   },
   {
@@ -629,7 +628,7 @@
     ]
   },
   {
-    "shortId": "52326P",
+    "shortId": "SYLVAN",
     "badges": [
       "https://i.imgur.com/9BVPsBp.png",
       "https://i.imgur.com/681O4TX.png",
@@ -654,5 +653,26 @@
         "#DBA100 100%"
       ]
     }
+  },
+  {
+    "shortId": "E53WJK",
+    "profile-background": "https://i.imgur.com/DO6uK19.png",
+    "gradient": {
+      "rot": "108deg",
+      "stops": [
+        "#B8DEFF 0%",
+        "#ffffff 50%",
+        "#B8DEFF 100%"
+      ]
+    },
+    "badges": [
+      "https://i.imgur.com/GJq7UHM.png"
+    ]
+  },
+  {
+    "shortId": "MTK3Z5",
+    "badges": [
+      "https://i.imgur.com/33tENEQ.png"
+    ]
   }
 ]

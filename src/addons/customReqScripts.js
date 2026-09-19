@@ -7,7 +7,6 @@ const customReqScripts = (settings) => {
   let newprice;
   let updating = false;
 
-  const _apiHost = `api2.${base_url.replace("https://", "")}`;
   window.XMLHttpRequest = function () {
     const xhr = new originalXHR();
     let requestUrl = "";
@@ -17,11 +16,16 @@ const customReqScripts = (settings) => {
       originalXHR.prototype.open.apply(this, [method, url, ...args]);
     };
 
+
     xhr.send = function (data) {
-      if (data && custom_list_price && newprice &&
-          requestUrl.includes(_apiHost) &&
-          location.href === `${base_url}inventory` &&
-          document.querySelector(".vm--container > .vm--modal > .wrapper-modal")?.id !== "sell-item-modal") {
+      if (
+        requestUrl.includes(`api2.${base_url.replace("https://", "")}`) &&
+        location.href === `${base_url}inventory` &&
+        document.querySelector(".vm--container > .vm--modal > .wrapper-modal")?.id !== "sell-item-modal" &&
+        data &&
+        newprice &&
+        custom_list_price
+      ) {
         try {
           const json = JSON.parse(data);
           if (Object.keys(json).length === 2) {
@@ -106,36 +110,27 @@ const customReqScripts = (settings) => {
     borderRadius: ".25rem",
   });
 
-  let _moPending = false;
   const observer = new MutationObserver(() => {
-    if (_moPending) return;
-    _moPending = true;
-    requestAnimationFrame(() => {
-      _moPending = false;
-      const href = window.location.href;
-      if (href !== `${base_url}inventory` && href !== `${base_url}hub/market`) return;
-
-      if (href === `${base_url}inventory` && custom_list_price) {
-        const sellElem = document.querySelector(".cont-sell");
-        if (sellElem && !document.getElementById("juice-custom-listing") && sellElem.parentElement.parentElement.id !== "sell-item-modal") {
-          sellElem.children[1].after(inputElem);
-        }
+    if (window.location.href === `${base_url}inventory` && custom_list_price) {
+      const sellElem = document.querySelector(".cont-sell");
+      if (sellElem && !document.getElementById("juice-custom-listing") && sellElem.parentElement.parentElement.id !== "sell-item-modal") {
+        sellElem.children[1].after(inputElem);
       }
+    }
 
-      if (
-        window.location.href === `${base_url}hub/market` &&
-        document.getElementsByClassName("subjects").length === 2 &&
-        !document
-          .getElementsByClassName("item-name")[0]
-          ?.innerText.includes(" - ") &&
-        !updating &&
-        ids.length > 0 &&
-        market_names
-      ) {
-        marketUsers();
-        updating = true;
-      }
-    });
+    if (
+      window.location.href === `${base_url}hub/market` &&
+      document.getElementsByClassName("subjects").length === 2 &&
+      !document
+        .getElementsByClassName("item-name")[0]
+        ?.innerText.includes(" - ") &&
+      !updating &&
+      ids.length > 0 &&
+      market_names
+    ) {
+      marketUsers();
+      updating = true;
+    }
   });
 
   observer.observe(document.body, { childList: true, subtree: true });

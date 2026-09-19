@@ -24,7 +24,12 @@
 
 ## Performance Baseline
 
-This branch keeps the current Electron 10 runtime and focuses on local performance work only. The goal is to reduce client overhead on Apple Silicon without changing the app framework or widening the platform target.
+This branch targets the current Electron 32 runtime and focuses on local performance work only. The goal is to reduce client overhead on Apple Silicon without changing the app framework or widening the platform target.
+
+## Documentation
+
+- [**Bundle Research Report**](bundle-research-report.md) — everything learned from reverse-engineering the Kirka.io bundle: dawn-patch cache pipeline, string-table decoder, input/onGround/jump/bhop internals, patch status
+- [**Client Optimisation Plan**](client-optimisation-plan.md) — prioritized pipeline fixes, performance work, and upgrades unlocked by the research (bhop excluded)
 
 ## Download
 

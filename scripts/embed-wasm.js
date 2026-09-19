@@ -9,14 +9,14 @@ const bytes = Array.from(buf);
 let js = "// Auto-generated from Rust WASM compile\n";
 js += "const _wasmBytes = new Uint8Array([" + bytes.join(",") + "]);\n";
 js += `
-let _wasmInstance = null;
+let _wasmExports = null;
 let _wasmMemory = null;
 
 function _ensureWasm() {
-  if (_wasmInstance) return;
+  if (_wasmExports) return;
   const mod = new WebAssembly.Module(_wasmBytes);
   const mem = new WebAssembly.Memory({ initial: 1 });
-  _wasmInstance = new WebAssembly.Instance(mod, { env: { memory: mem } });
+  _wasmExports = new WebAssembly.Instance(mod, { env: { memory: mem } }).exports;
   _wasmMemory = mem;
 }
 
@@ -27,12 +27,12 @@ function getScratchBuf() {
 
 function parseSig(offset) {
   _ensureWasm();
-  return _wasmInstance.exports.parse_sig(offset) >>> 0;
+  return _wasmExports.parse_sig(offset) >>> 0;
 }
 
 function fastHash(offset) {
   _ensureWasm();
-  return _wasmInstance.exports.fast_hash(offset) >>> 0;
+  return _wasmExports.fast_hash(offset) >>> 0;
 }
 
 module.exports = { getScratchBuf, parseSig, fastHash };

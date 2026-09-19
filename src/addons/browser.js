@@ -17,68 +17,98 @@ const dataUrls = {
   killicons: `${githubBase}/kill_icons.json`,
 };
 
-const _cacheKeys = [];
-const CACHE_MAX = 8;
 const cached = {};
-const _setCache = (key, data) => {
-  if (!cached[key]) {
-    if (_cacheKeys.length >= CACHE_MAX) {
-      const evict = _cacheKeys.shift();
-      delete cached[evict];
-    }
-    _cacheKeys.push(key);
-  }
-  cached[key] = data;
-};
 
 const getData = async (key) => {
+  if (!key) return [];
   if (cached[key]) return cached[key];
 
   if (key === "css") {
-    const [res1, res2] = await Promise.all([
-      fetch(dataUrls.css),
-      fetch(dataUrls.cssExtra),
-    ]);
-    const [json1, json2] = await Promise.all([res1.json(), res2.json()]);
-    const data = [
-      ...(Array.isArray(json1) ? json1 : []),
-      ...(Array.isArray(json2) ? json2 : []),
-    ];
-    _setCache(key, data);
-    return data;
+    try {
+      const [res1, res2] = await Promise.all([fetch(dataUrls.css), fetch(dataUrls.cssExtra)]);
+      const [json1, json2] = await Promise.all([res1.json(), res2.json()]);
+      const data = [...(Array.isArray(json1) ? json1 : []), ...(Array.isArray(json2) ? json2 : [])];
+      cached[key] = data;
+      return data;
+    } catch (e) {
+      try {
+        const local = path.join(__dirname, "../../css.json");
+        if (fs.existsSync(local)) {
+          const data = JSON.parse(fs.readFileSync(local, "utf8"));
+          cached[key] = data;
+          return data;
+        }
+      } catch (err) {}
+      return [];
+    }
   }
 
-  const res = await fetch(dataUrls[key]);
-  const json = await res.json();
-  let data;
-  if (Array.isArray(json)) {
-    data = json;
-  } else if (json.sounds) {
-    data = json.sounds;
-  } else if (json.skyboxes) {
-    data = json.skyboxes;
-  } else if (json.killIcons) {
-    data = json.killIcons;
-  } else {
-    data = json;
+  if (key === "maps") {
+    try {
+      const res = await fetch(dataUrls.maps);
+      const json = await res.json();
+      cached[key] = json;
+      return json;
+    } catch (e) {
+      try {
+        const local = path.join(__dirname, "../../maps.json");
+        if (fs.existsSync(local)) {
+          const data = JSON.parse(fs.readFileSync(local, "utf8"));
+          cached[key] = data;
+          return data;
+        }
+      } catch (err) {}
+      return [];
+    }
   }
-  _setCache(key, data);
-  return data;
+
+  if (!dataUrls[key]) return [];
+
+  try {
+    const res = await fetch(dataUrls[key]);
+    const json = await res.json();
+    let data;
+    if (Array.isArray(json)) {
+      data = json;
+    } else if (json.sounds) {
+      data = json.sounds;
+    } else if (json.skyboxes) {
+      data = json.skyboxes;
+    } else if (json.killIcons) {
+      data = json.killIcons;
+    } else {
+      data = json || [];
+    }
+    cached[key] = data;
+    return data;
+  } catch (err) {
+    console.warn(`[Dawn] browser getData failed for ${key}:`, err.message);
+    return [];
+  }
 };
 
 const filterItems = (data, key) => {
+  if (!Array.isArray(data)) return [];
+  let filtered = data;
   if (key === "css") {
-    return data.filter(i => convert(i, key).availability === "free");
+    filtered = data.filter((i) => convert(i, key).availability === "free");
   }
-  return data;
+
+  filtered.sort((a, b) => {
+    const aFeatured = (a.label || "").toLowerCase() === "featured";
+    const bFeatured = (b.label || "").toLowerCase() === "featured";
+    if (aFeatured && !bFeatured) return -1;
+    if (!aFeatured && bFeatured) return 1;
+    return 0;
+  });
+
+  return filtered;
 };
 
 const convert = (item, type) => {
-  if (item._converted && item._converted._type === type) return item._converted;
-  const _cache = (obj) => { obj._type = type; item._converted = obj; return obj; };
   switch (type) {
     case "css":
-      return _cache({
+      return {
         title: item.title,
         description: item.description,
         previewUrl: item.homeImage,
@@ -89,9 +119,9 @@ const convert = (item, type) => {
         availability: item.availability,
         downloadUrl: item.downloadUrl,
         discord: item.discord,
-      });
+      };
     case "crosshairs":
-      return _cache({
+      return {
         title: item.id,
         previewUrl: item.Crosshair,
         tags: item.tags,
@@ -100,9 +130,9 @@ const convert = (item, type) => {
         availability: "free",
         downloadUrl: item.Crosshair,
         discord: item.discord,
-      });
+      };
     case "textures":
-      return _cache({
+      return {
         title: item.id,
         previewUrl: item.textureImage,
         tags: item.tags,
@@ -111,9 +141,9 @@ const convert = (item, type) => {
         availability: "free",
         downloadUrl: item.textureImage,
         discord: item.discord,
-      });
+      };
     case "skyboxes":
-      return _cache({
+      return {
         title: item.name,
         previewUrl: item.isPack ? item.images?.[0]?.url : item.url,
         tags: item.isPack ? ["Pack"] : ["Single"],
@@ -124,9 +154,9 @@ const convert = (item, type) => {
         discord: item.discord,
         isPack: item.isPack,
         images: item.images,
-      });
+      };
     case "sounds":
-      return _cache({
+      return {
         title: item.name,
         previewUrl: null,
         tags: [],
@@ -135,9 +165,9 @@ const convert = (item, type) => {
         availability: "free",
         downloadUrl: null,
         audioFiles: item.audioFiles,
-      });
+      };
     case "killicons":
-      return _cache({
+      return {
         title: item.name,
         previewUrl: item.url,
         tags: [],
@@ -146,9 +176,9 @@ const convert = (item, type) => {
         availability: "free",
         downloadUrl: item.url,
         discord: item.discord,
-      });
+      };
     case "maps":
-      return _cache({
+      return {
         title: item.map,
         previewUrl: item.image || item.preview || null,
         tags: item.modes || [],
@@ -156,9 +186,9 @@ const convert = (item, type) => {
         label: "",
         availability: "free",
         downloadUrl: item.file || item.code || null,
-      });
+      };
     default:
-      return _cache({
+      return {
         title: item.name || item.title || item.id || "Unknown",
         previewUrl: item.homeImage || item.previewUrl || item.image || item.url || null,
         tags: item.tags || [],
@@ -167,7 +197,7 @@ const convert = (item, type) => {
         availability: item.availability || "free",
         downloadUrl: item.downloadUrl || item.url || null,
         discord: item.discord || "",
-      });
+      };
   }
 };
 
@@ -190,17 +220,27 @@ const toStyleUrl = (url) => {
 
 const applyCss = (downloadUrl) => {
   const styleUrl = toStyleUrl(downloadUrl);
+  const input = document.querySelector("input[data-setting='css_link']");
+  if (input) input.value = styleUrl;
+  const cb = document.querySelector("input[data-setting='css_enabled']");
+  if (cb) cb.checked = true;
   ipcRenderer.send("update-setting", "css_link", styleUrl);
   ipcRenderer.send("update-setting", "css_enabled", true);
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "css_link", value: styleUrl } }));
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "css_enabled", value: true } }));
+  window.updateTheme?.();
 };
 
 const removeCss = () => {
+  const input = document.querySelector("input[data-setting='css_link']");
+  if (input) input.value = "";
+  const cb = document.querySelector("input[data-setting='css_enabled']");
+  if (cb) cb.checked = false;
   ipcRenderer.send("update-setting", "css_link", "");
   ipcRenderer.send("update-setting", "css_enabled", false);
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "css_link", value: "" } }));
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "css_enabled", value: false } }));
+  window.updateTheme?.();
 };
 
 const applyCrosshair = (url) => {
@@ -232,68 +272,50 @@ const skyboxKeys = [
 
 const applySkybox = (raw) => {
   if (raw.isPack && raw.images) {
-    raw.images.forEach((img, i) => { if (skyboxKeys[i]) localStorage.setItem(skyboxKeys[i], img.url); });
+    raw.images.forEach((img, i) => {
+      if (skyboxKeys[i]) localStorage.setItem(skyboxKeys[i], img.url);
+    });
     ipcRenderer.send("update-setting", "skybox_url", raw.images[0].url);
   } else {
-    skyboxKeys.forEach(k => localStorage.setItem(k, raw.url));
+    skyboxKeys.forEach((k) => localStorage.setItem(k, raw.url));
     ipcRenderer.send("update-setting", "skybox_url", raw.url);
   }
 };
 
 const removeSkybox = () => {
-  skyboxKeys.forEach(k => localStorage.removeItem(k));
+  skyboxKeys.forEach((k) => localStorage.removeItem(k));
   ipcRenderer.send("update-setting", "skybox_url", "");
 };
 
-const _ensureKillIconSheet = () => {
-  let styleEl = document.getElementById("juice-styles-ui-features");
-  if (!styleEl) {
-    styleEl = document.createElement("style");
-    styleEl.id = "juice-styles-ui-features";
-    document.head.appendChild(styleEl);
-  }
-  if (!styleEl.sheet) {
-    styleEl.textContent = '';
-    document.head.appendChild(styleEl);
-  }
-  return styleEl;
-};
-
 const applyKillIcon = (url) => {
+  ipcRenderer.send("update-setting", "killicon_link", url);
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "killicon_link", value: url } }));
 
-  const styleEl = _ensureKillIconSheet();
-  const sheet = styleEl.sheet;
-  const beforeRule = `.animate-cont::before { content: ""; background: url(${url}); width: 10rem; height: 10rem; margin-bottom: 2rem; display: inline-block; background-position: center; background-size: contain; background-repeat: no-repeat; }`;
-  const svgRule = `.animate-cont svg { display: none; }`;
+  let styleEl = document.getElementById("juice-styles-ui-features");
+  if (!styleEl) return;
 
-  for (let i = sheet.cssRules.length - 1; i >= 0; i--) {
-    const r = sheet.cssRules[i];
-    if (r.selectorText === '.animate-cont::before' || r.selectorText === '.animate-cont svg') {
-      sheet.deleteRule(i);
-    }
+  const rule = `.animate-cont::before { content: ""; background: url(${url}); width: 10rem; height: 10rem; margin-bottom: 2rem; display: inline-block; background-position: center; background-size: contain; background-repeat: no-repeat; } .animate-cont svg { display: none; }`;
+  if (!styleEl.innerHTML.includes("animate-cont")) {
+    styleEl.innerHTML += rule;
+  } else {
+    styleEl.innerHTML = styleEl.innerHTML.replace(
+      /\.animate-cont::before \{[^}]*\}/,
+      `.animate-cont::before { content: ""; background: url(${url}); width: 10rem; height: 10rem; margin-bottom: 2rem; display: inline-block; background-position: center; background-size: contain; background-repeat: no-repeat; }`,
+    );
   }
-  sheet.insertRule(beforeRule, sheet.cssRules.length);
-  sheet.insertRule(svgRule, sheet.cssRules.length);
 };
 
 const removeKillIcon = () => {
+  ipcRenderer.send("update-setting", "killicon_link", "");
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "killicon_link", value: "" } }));
 
   const styleEl = document.getElementById("juice-styles-ui-features");
-  if (styleEl && styleEl.sheet) {
-    const sheet = styleEl.sheet;
-    for (let i = sheet.cssRules.length - 1; i >= 0; i--) {
-      const r = sheet.cssRules[i];
-      if (r.selectorText === '.animate-cont::before' || r.selectorText === '.animate-cont svg') {
-        sheet.deleteRule(i);
-      }
-    }
+  if (styleEl) {
+    styleEl.innerHTML = styleEl.innerHTML.replace(/\.animate-cont::before \{[^}]*\}/, "").replace(/\.animate-cont svg \{ display: none; \}/, "");
   }
 };
 
 const soundsDir = ipcRenderer.sendSync("get-sounds-path");
-
 
 const installSounds = async (audioFiles) => {
   fs.mkdirSync(soundsDir, { recursive: true });
@@ -317,10 +339,7 @@ const isInstalled = (type, item) => {
   const settings = ipcRenderer.sendSync("get-settings");
   switch (type) {
     case "css":
-      return (
-        settings.css_enabled &&
-        (settings.css_link === item.downloadUrl || settings.css_link === toStyleUrl(item.downloadUrl))
-      );
+      return settings.css_enabled && (settings.css_link === item.downloadUrl || settings.css_link === toStyleUrl(item.downloadUrl));
     case "crosshairs":
       return localStorage.getItem("SETTINGS___SETTING/CROSSHAIR___SETTING/STATIC_URL___SETTING") === item.downloadUrl;
     case "textures":
@@ -331,10 +350,14 @@ const isInstalled = (type, item) => {
       return settings.killicon_link === item.downloadUrl;
     case "sounds": {
       if (!item.audioFiles?.length) return false;
-      const first = item.audioFiles.find(f => f.url.endsWith(".mp3"));
+      const first = item.audioFiles.find((f) => f.url.endsWith(".mp3"));
       if (!first) return false;
       const filename = path.basename(decodeURIComponent(first.url.split("?")[0]));
-      try { return fs.existsSync(path.join(soundsDir, filename)); } catch { return false; }
+      try {
+        return fs.existsSync(path.join(soundsDir, filename));
+      } catch {
+        return false;
+      }
     }
     default:
       return false;
@@ -349,7 +372,7 @@ window.openLightbox = (urls, index = 0) => {
   lightboxIndex = index;
 
   let overlay = document.getElementById("juice-lightbox");
-    if (!overlay) {
+  if (!overlay) {
     overlay = document.createElement("div");
     overlay.id = "juice-lightbox";
     overlay.innerHTML = `
@@ -378,12 +401,10 @@ window.openLightbox = (urls, index = 0) => {
           canvas.height = img.naturalHeight;
           const ctx = canvas.getContext("2d");
           ctx.drawImage(img, 0, 0);
-          canvas.toBlob(blob => {
-            navigator.clipboard.write([
-              new ClipboardItem({ "image/png": blob })
-            ]);
+          canvas.toBlob((blob) => {
+            navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
           });
-          overlay.querySelector("#info").textContent = "Copied to clipboard!"
+          overlay.querySelector("#info").textContent = "Copied to clipboard!";
           customNotification({
             message: "Image copied to clipboard!",
             icon: img.src,
@@ -391,14 +412,13 @@ window.openLightbox = (urls, index = 0) => {
         }
       }
     };
+    // Register the global keydown handler exactly once per lightbox lifetime.
+    // (Previously this ran on every openLightbox() call, stacking duplicate
+    // listeners that would fire N copies of the handler per keypress.)
+    document.addEventListener("keydown", keyHandler);
 
     overlay.addEventListener("click", close);
   } else overlay.querySelector("#info").textContent = "Ctrl+C to copy";
-  if (document._lightboxKeyHandler) {
-    document.removeEventListener("keydown", document._lightboxKeyHandler);
-  }
-  document._lightboxKeyHandler = keyHandler;
-  document.addEventListener("keydown", keyHandler);
 
   updateLightbox();
   overlay.classList.add("active");
@@ -413,165 +433,13 @@ const updateLightbox = () => {
   overlay.querySelector(".juice-lightbox-img").src = lightboxItems[lightboxIndex];
 };
 
-const _handleCardClick = (container, e, items, allRaw, type) => {
-  const card = e.target.closest(".community-card");
-  if (!card) return;
-  const index = parseInt(card.dataset.index, 10);
-  if (isNaN(index)) return;
-  const raw = allRaw[index];
-  const item = convert(raw, type);
-
-  const dotsBtn = e.target.closest(".card-preview-dots");
-  if (dotsBtn) {
-    e.stopPropagation();
-    const cardImg = card.querySelector(".card-img");
-    const dots = card.querySelectorAll(".preview-dot");
-    const srcs = [item.previewUrl, item.ingameImage];
-    let current = parseInt(card.dataset.previewIdx || '0', 10);
-    current = (current + 1) % 2;
-    card.dataset.previewIdx = current;
-    cardImg.src = srcs[current];
-    dots.forEach((d, i) => d.classList.toggle("active", i === current));
-    return;
-  }
-
-  const label = e.target.closest(".card-label");
-  if (label) return;
-
-  const previewDiv = e.target.closest(".card-preview");
-  if (previewDiv) {
-    const imgs = [];
-    if (item.isPack && item.images?.length) {
-      item.images.forEach(img => imgs.push(img.url));
-    } else if (item.previewUrl && item.ingameImage) {
-      imgs.push(card.querySelector(".card-img").src);
-    } else if (item.previewUrl) {
-      imgs.push(item.previewUrl);
-    }
-    openLightbox(imgs, 0);
-    return;
-  }
-
-  const linkBtn = e.target.closest(".card-link-btn");
-  if (linkBtn) {
-    navigator.clipboard.writeText(item.downloadUrl);
-    linkBtn.innerHTML = `<i class="fas fa-check"></i>`;
-    linkBtn.classList.add("copied");
-    setTimeout(() => {
-      linkBtn.innerHTML = `<i class="fas fa-link"></i>`;
-      linkBtn.classList.remove("copied");
-    }, 1500);
-    return;
-  }
-
-  const externalBtn = e.target.closest(".card-external-btn");
-  if (externalBtn) {
-    shell.openExternal("https://kirkacommunityhub.pages.dev/assets#sounds");
-    return;
-  }
-
-  const mapCopyBtn = e.target.closest(".card-map-copy-btn");
-  if (mapCopyBtn) {
-    mapCopyBtn.textContent = "...";
-    mapCopyBtn.disabled = true;
-    fetch(item.downloadUrl).then(res => res.text()).then(text => {
-      navigator.clipboard.writeText(text);
-      mapCopyBtn.textContent = "Copied!";
-      mapCopyBtn.classList.add("uninstall");
-      mapCopyBtn.classList.remove("free");
-      setTimeout(() => {
-        mapCopyBtn.textContent = "Copy";
-        mapCopyBtn.classList.remove("uninstall");
-        mapCopyBtn.classList.add("free");
-        mapCopyBtn.disabled = false;
-      }, 1500);
-    }).catch(e => {
-      console.error(e);
-      mapCopyBtn.textContent = "Error";
-      mapCopyBtn.disabled = false;
-      setTimeout(() => { mapCopyBtn.textContent = "Copy"; mapCopyBtn.disabled = false; }, 2000);
-    });
-    return;
-  }
-
-  const btn = e.target.closest(".card-btn:not(.card-map-copy-btn)");
-  if (!btn || btn.disabled) return;
-  if (type === "maps") return;
-
-  const currentlyInstalled = isInstalled(type, item);
-  if (currentlyInstalled) {
-    switch (type) {
-      case "css": removeCss(); break;
-      case "crosshairs": removeCrosshair(); break;
-      case "textures": removeTexture(); break;
-      case "skyboxes": removeSkybox(); break;
-      case "killicons": removeKillIcon(); break;
-      case "sounds": uninstallSounds(raw.audioFiles); break;
-    }
-    btn.textContent = isInstallType(type) ? "Install" : "Download";
-    btn.className = `card-btn ${item.availability || "free"}`;
-    return;
-  }
-
-  btn.textContent = "...";
-  btn.disabled = true;
-
-  const doAction = async () => {
-    try {
-      switch (type) {
-        case "css": applyCss(item.downloadUrl); break;
-        case "crosshairs": applyCrosshair(item.downloadUrl); break;
-        case "textures": applyTexture(item.downloadUrl); break;
-        case "skyboxes": applySkybox(raw); break;
-        case "killicons": applyKillIcon(item.downloadUrl); break;
-        case "sounds": await installSounds(raw.audioFiles); break;
-        default: {
-          const ext = item.downloadUrl.split(".").pop().split("?")[0];
-          const filename = `${item.title.replace(/[^a-z0-9]/gi, "_")}.${ext}`;
-          const dest = path.join(os.homedir(), "Downloads", filename);
-          await downloadFile(item.downloadUrl, dest);
-        }
-      }
-      btn.textContent = isInstallType(type) ? "Uninstall" : "Download";
-      btn.className = "card-btn uninstall";
-      btn.disabled = false;
-
-      if (["css", "crosshairs", "textures", "skyboxes", "killicons"].includes(type)) {
-        const parent = btn.closest(`#${type}-options`);
-        if (parent) {
-          parent.querySelectorAll(".card-btn.uninstall").forEach(otherBtn => {
-            if (otherBtn !== btn) {
-              otherBtn.textContent = "Install";
-              otherBtn.className = `card-btn free`;
-            }
-          });
-        }
-      }
-    } catch (e) {
-      console.error(e);
-      btn.textContent = "Error";
-      btn.disabled = false;
-      setTimeout(() => {
-        btn.textContent = isInstallType(type) ? "Install" : "Download";
-        btn.disabled = false;
-      }, 2000);
-    }
-  };
-  doAction();
-};
-
 const renderCards = (container, items, type, allRaw) => {
-  container.replaceChildren();
+  container.querySelectorAll(".community-card").forEach((el) => el.remove());
 
-  container._cardItems = items;
-  container._cardAllRaw = allRaw;
-  container._cardType = type;
-
-  items.forEach((raw, idx) => {
+  items.forEach((raw) => {
     const item = convert(raw, type);
     const card = document.createElement("div");
     card.className = `community-card ${item.availability || "free"}`;
-    card.dataset.index = idx;
 
     const showPreview = type !== "commscripts" && type !== "sounds";
     const isPaid = item.availability === "paid";
@@ -638,9 +506,9 @@ const renderCards = (container, items, type, allRaw) => {
         <div class="card-info">
           <div class="card-title">${item.title}</div>
           ${item.description ? `<div class="card-desc">${item.description}</div>` : ""}
-          ${item.tags?.length ? `<div class="card-tags">${item.tags.map(t => `<span class="card-tag">${t}</span>`).join("")}</div>` : ""}
+          ${item.tags?.length ? `<div class="card-tags">${item.tags.map((t) => `<span class="card-tag">${t}</span>`).join("")}</div>` : ""}
           <div class="card-footer">
-            <span class="card-owner">${(item.owner && item.owner !== "Unknown") ? item.owner : ""}</span>
+            <span class="card-owner">${item.owner && item.owner !== "Unknown" ? item.owner : ""}</span>
             <div class="card-actions">
               ${soundsPreviewBtn}
               ${linkBtn}
@@ -649,6 +517,177 @@ const renderCards = (container, items, type, allRaw) => {
           </div>
         </div>
       `;
+
+    if (showPreview && item.previewUrl) {
+      const previewDiv = card.querySelector(".card-preview");
+
+      if (hasIngame) {
+        const dotsContainer = card.querySelector(".card-preview-dots");
+        const dots = card.querySelectorAll(".preview-dot");
+        const cardImg = card.querySelector(".card-img");
+        const srcs = [item.previewUrl, item.ingameImage];
+        let current = 0;
+
+        dotsContainer?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          current = (current + 1) % 2;
+          cardImg.src = srcs[current];
+          dots.forEach((d, i) => d.classList.toggle("active", i === current));
+        });
+      }
+
+      previewDiv?.addEventListener("click", (e) => {
+        if (e.target.classList.contains("card-label")) return;
+        if (e.target.closest(".card-preview-dots")) return;
+
+        const imgs = [];
+        if (item.isPack && item.images?.length) {
+          item.images.forEach((img) => imgs.push(img.url));
+        } else if (hasIngame) {
+          imgs.push(card.querySelector(".card-img").src);
+        } else if (item.previewUrl) {
+          imgs.push(item.previewUrl);
+        }
+
+        openLightbox(imgs, 0);
+      });
+    }
+
+    if (hasDirectLink(type) && item.downloadUrl && type !== "maps") {
+      const linkBtnEl = card.querySelector(".card-link-btn");
+      linkBtnEl?.addEventListener("click", () => {
+        navigator.clipboard.writeText(item.downloadUrl);
+        linkBtnEl.innerHTML = `<i class="fas fa-check"></i>`;
+        linkBtnEl.classList.add("copied");
+        setTimeout(() => {
+          linkBtnEl.innerHTML = `<i class="fas fa-link"></i>`;
+          linkBtnEl.classList.remove("copied");
+        }, 1500);
+      });
+    }
+
+    card.querySelector(".card-external-btn")?.addEventListener("click", () => {
+      shell.openExternal("https://kirkacommunityhub.pages.dev/assets#sounds");
+    });
+
+    if (type === "maps") {
+      const copyBtn = card.querySelector(".card-map-copy-btn");
+      copyBtn?.addEventListener("click", async () => {
+        try {
+          copyBtn.textContent = "...";
+          copyBtn.disabled = true;
+          const res = await fetch(item.downloadUrl);
+          const text = await res.text();
+          await navigator.clipboard.writeText(text);
+          copyBtn.textContent = "Copied!";
+          copyBtn.classList.add("uninstall");
+          copyBtn.classList.remove("free");
+          setTimeout(() => {
+            copyBtn.textContent = "Copy";
+            copyBtn.classList.remove("uninstall");
+            copyBtn.classList.add("free");
+            copyBtn.disabled = false;
+          }, 1500);
+        } catch (e) {
+          console.error(e);
+          copyBtn.textContent = "Error";
+          copyBtn.disabled = false;
+          setTimeout(() => {
+            copyBtn.textContent = "Copy";
+            copyBtn.disabled = false;
+          }, 2000);
+        }
+      });
+    }
+
+    const btn = card.querySelector(".card-btn:not(.card-map-copy-btn)");
+    if (btn && !cantInstall && type !== "maps") {
+      btn.addEventListener("click", async () => {
+        const currentlyInstalled = isInstalled(type, item);
+
+        if (currentlyInstalled) {
+          switch (type) {
+            case "css":
+              removeCss();
+              break;
+            case "crosshairs":
+              removeCrosshair();
+              break;
+            case "textures":
+              removeTexture();
+              break;
+            case "skyboxes":
+              removeSkybox();
+              break;
+            case "killicons":
+              removeKillIcon();
+              break;
+            case "sounds":
+              uninstallSounds(raw.audioFiles);
+              break;
+          }
+          btn.textContent = isInstallType(type) ? "Install" : "Download";
+          btn.className = `card-btn ${item.availability || "free"}`;
+          return;
+        }
+
+        try {
+          btn.textContent = "...";
+          btn.disabled = true;
+
+          switch (type) {
+            case "css":
+              applyCss(item.downloadUrl);
+              break;
+            case "crosshairs":
+              applyCrosshair(item.downloadUrl);
+              break;
+            case "textures":
+              applyTexture(item.downloadUrl);
+              break;
+            case "skyboxes":
+              applySkybox(raw);
+              break;
+            case "killicons":
+              applyKillIcon(item.downloadUrl);
+              break;
+            case "sounds":
+              await installSounds(raw.audioFiles);
+              break;
+            default: {
+              const ext = item.downloadUrl.split(".").pop().split("?")[0];
+              const filename = `${item.title.replace(/[^a-z0-9]/gi, "_")}.${ext}`;
+              const dest = path.join(os.homedir(), "Downloads", filename);
+              await downloadFile(item.downloadUrl, dest);
+            }
+          }
+
+          btn.textContent = isInstallType(type) ? "Uninstall" : "Download";
+          btn.className = "card-btn uninstall";
+          btn.disabled = false;
+
+          if (["css", "crosshairs", "textures", "skyboxes", "killicons"].includes(type)) {
+            const container = btn.closest(`#${type}-options`);
+            if (container) {
+              container.querySelectorAll(".card-btn.uninstall").forEach((otherBtn) => {
+                if (otherBtn !== btn) {
+                  otherBtn.textContent = "Install";
+                  otherBtn.className = `card-btn free`;
+                }
+              });
+            }
+          }
+        } catch (e) {
+          console.error(e);
+          btn.textContent = "Error";
+          btn.disabled = false;
+          setTimeout(() => {
+            btn.textContent = isInstallType(type) ? "Install" : "Download";
+            btn.disabled = false;
+          }, 2000);
+        }
+      });
+    }
 
     container.appendChild(card);
   });
@@ -670,7 +709,7 @@ const initBrowser = (menu) => {
       openLightbox(e.target.src, 0);
     } else if (e.target.tagName.toLowerCase() === "canvas" && e.target.closest("#community-options, #gallery-options")) {
       e.stopPropagation();
-      openLightbox(e.target.toDataURL(), 0)
+      openLightbox(e.target.toDataURL(), 0);
     }
   });
 
@@ -684,9 +723,9 @@ const initBrowser = (menu) => {
       const query = searchInput?.value?.toLowerCase() || "";
       let filtered;
       if (query) {
-        filtered = data.filter(i => {
+        filtered = data.filter((i) => {
           const n = convert(i, key);
-          return n.title?.toLowerCase().includes(query) || n.tags?.some(t => t.toLowerCase().includes(query));
+          return n.title?.toLowerCase().includes(query) || n.tags?.some((t) => t.toLowerCase().includes(query));
         });
       } else {
         filtered = data;
@@ -699,23 +738,10 @@ const initBrowser = (menu) => {
     }
   };
 
-  const communityOptions = menu.querySelector("#community-options");
-  if (communityOptions) {
-    communityOptions.addEventListener("click", (e) => {
-      const container = e.target.closest(".juice.options.selected");
-      if (!container) return;
-      const items = container._cardItems;
-      const allRaw = container._cardAllRaw;
-      const type = container._cardType;
-      if (!items || !allRaw || !type) return;
-      _handleCardClick(container, e, items, allRaw, type);
-    });
-  }
-
   selectors.forEach((sel) => {
     sel.addEventListener("click", () => {
-      selectors.forEach(s => s.classList.remove("active"));
-      panels.forEach(p => p.classList.remove("selected"));
+      selectors.forEach((s) => s.classList.remove("active"));
+      panels.forEach((p) => p.classList.remove("selected"));
       sel.classList.add("active");
       const key = sel.dataset.selector;
       const panel = menu.querySelector(`#${key}-options`);
@@ -725,29 +751,25 @@ const initBrowser = (menu) => {
   });
 
   if (searchInput) {
-    let _searchRaf = null;
     searchInput.addEventListener("input", () => {
-      if (_searchRaf) return;
-      _searchRaf = requestAnimationFrame(() => {
-        _searchRaf = null;
-        const query = searchInput.value.toLowerCase();
-        const container = menu.querySelector(`#${currentKey}-options`);
-        if (!container || !currentItems.length) return;
-        let filtered;
-        if (query) {
-          filtered = currentItems.filter(i => {
-            const n = convert(i, currentKey);
-            return n.title?.toLowerCase().includes(query) || n.tags?.some(t => t.toLowerCase().includes(query));
-          });
-        } else {
-          filtered = currentItems;
-        }
-        renderCards(container, filtered, currentKey, currentItems);
-      });
+      const query = searchInput.value.toLowerCase();
+      const container = menu.querySelector(`#${currentKey}-options`);
+      if (!container || !currentItems.length) return;
+      let filtered;
+      if (query) {
+        filtered = currentItems.filter((i) => {
+          const n = convert(i, currentKey);
+          return n.title?.toLowerCase().includes(query) || n.tags?.some((t) => t.toLowerCase().includes(query));
+        });
+      } else {
+        filtered = currentItems;
+      }
+      filtered = filterItems(filtered, currentKey);
+      renderCards(container, filtered, currentKey, currentItems);
     });
   }
 
-  const lastOpenedSelector = localStorage.getItem("juice-menu-selector");
+  const lastOpenedSelector = localStorage.getItem("juice-menu-selector") || "css";
   loadSection(lastOpenedSelector);
 };
 

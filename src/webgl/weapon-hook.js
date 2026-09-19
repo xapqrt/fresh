@@ -3,6 +3,7 @@ const { applyZSpin, applyXSpin, applyYSpin, hsvToRgb } = require('./mat-utils');
 const wasm = require('../wasm/dawn_wasm');
 
 const _matBuf = wasm.getScratchBuf();
+const _matBufI32 = new Int32Array(_matBuf.buffer, _matBuf.byteOffset, _matBuf.length);
 const _rgbPixel = new Uint8Array(4);
 
 let _lastDrawCall = -1;
@@ -28,7 +29,10 @@ const _bloomCheck = (hash) => {
   return false;
 };
 
-const _fastHash = () => wasm.fastHash(0);
+const _fastHash = () => {
+  const i32 = _matBufI32;
+  return (i32[0] ^ i32[5] ^ i32[10] ^ i32[15]) >>> 0;
+};
 
 const INSPECT_DURATIONS = {
   vita: 600, rev: 550, mac10: 800, ar9: 550, m60: 550,
@@ -127,7 +131,8 @@ const _installWrappers = (gl) => {
   const origUniform4 = gl.uniformMatrix4fv.bind(gl);
 
   gl.uniformMatrix4fv = (location, transpose, data, srcOffset, srcLength) => {
-    if (!_enableMods || window.__weaponModsActive === false || !data || data.length < 16) {
+    if (window.__weaponModsActive === false) return origUniform4(location, transpose, data, srcOffset, srcLength);
+    if (!_enableMods || !data || data.length < 16) {
       return origUniform4(location, transpose, data, srcOffset, srcLength);
     }
 
@@ -302,9 +307,14 @@ const hookWebGL = () => {
   const origGetCtx = HTMLCanvasElement.prototype.getContext;
 
   HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    const isGameCanvas =
+      this.id === 'game' || this.id === 'gameCanvas' ||
+      (!_gameContext && (type === 'webgl' || type === 'webgl2') && this.width > 100 && this.height > 100);
+    // On macOS with ANGLE Metal, desynchronized: true causes severe compositor stutter
+    // and lock contention with WindowServer. Keep standard buffered presentation.
     const ctx = origGetCtx.call(this, type, attrs);
     if (!ctx || (type !== 'webgl' && type !== 'webgl2')) return ctx;
-    if (this.id !== 'game' || _gameContext) return ctx;
+    if (!isGameCanvas || _gameContext) return ctx;
 
     _gameContext = ctx;
 

@@ -5,3 +5,5 @@ build
 package-lock.json
 # WASM build artifacts
 src/wasm/target/
+.DS_Store
+.agents/

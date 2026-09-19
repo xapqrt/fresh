@@ -1,0 +1,14 @@
+#!/bin/bash
+# Blockchain Player Builder & Launcher
+# Fixes all dependency issues in 1 script
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+cd "$SCRIPT_DIR" || exit 1
+
+# Clean and reinstall critical dependencies
+npm install --force && \
+npm rebuild --force && \
+alias electron=$(which electron) || { echo "Failed to set electron alias"; exit 1; }
+
+# Launch the application
+exec electron /Users/xapqrt/Documents/code/dawn-fresh/src/main.js "$@"
