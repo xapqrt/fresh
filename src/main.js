@@ -99,21 +99,35 @@ setInterval(() => {
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
 
 // FPS cap: webContents.setFrameRate pins the page frame rate.
-// SAFETY: it is always clamped to the display's actual refresh rate —
-// requesting a rate HIGHER than the panel can present makes Chromium
-// produce frames faster than WindowServer flips, which on macOS ANGLE
-// Metal saturates the GPU command ring and DROPS presented frames
-// (measured: 1.6–2.7 FPS on screen at "650 FPS" rAF). On the 60Hz Air
-// panel every value ≥ 60 is therefore a no-op; only a true sub-refresh
-// cap (e.g. 30) actually calls setFrameRate. Live-updatable, no restart.
+// On macOS ANGLE/Metal (M-class Air) requesting a rate HIGHER than the
+// panel can present saturates the GPU drawable ring and drops nearly all
+// frames (measured 1.6–2.7 FPS on screen). On that platform we clamp to
+// the display rate. On Windows/Linux with D3D/Vulkan desktop GPUs the
+// compositor handles uncapped rates cleanly, so we honour the user's
+// cap all the way up (or uncap when cap=0). Live-updatable, no restart.
 const applyFrameCap = () => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   const cap = Number(settings.fps_cap) || 0;
-  if (cap === 0) return;
   try {
     const displayHz = Math.round(screen.getPrimaryDisplay().refreshRate) || 60;
-    const eff = Math.min(cap, displayHz);
-    if (eff > 0 && eff < displayHz) {
+    if (cap === 0) {
+      // Uncapped: let Chromium run at the display's native refresh (or
+      // uncap if engine_profile is uncap_*). Passing -1 explicitly tells
+      // Chromium not to clamp; without this the renderer stays at the
+      // previously-set cap.
+      if (process.platform === "darwin") {
+        gameWindow.webContents.setFrameRate(displayHz);
+      } else {
+        // Windows/Linux: explicitly request a high rate to lift any
+        // previously-set cap (Chromium clamps to the panel anyway, but
+        // setting a large value makes sure nothing is artificially pinned).
+        gameWindow.webContents.setFrameRate(Math.min(999, displayHz * 2));
+      }
+      return;
+    }
+    // On macOS clamp to the panel rate to avoid the drawable-ring stall.
+    const eff = process.platform === "darwin" ? Math.min(cap, displayHz) : cap;
+    if (eff > 0) {
       gameWindow.webContents.setFrameRate(eff);
     }
   } catch (e) {}
@@ -135,14 +149,20 @@ const applyHighRefreshPath = () => {
     if (wantsHigh === _highRefreshActive) return;
     _highRefreshActive = wantsHigh;
     if (wantsHigh) {
-      const cap = maxHz >= 240 ? 240 : maxHz >= 144 ? 144 : 120;
+      // Pick the FPS cap to match the panel, capped at 480.
+      const cap = maxHz >= 480 ? 480 : maxHz >= 360 ? 360 : maxHz >= 240 ? 240 : maxHz >= 144 ? 144 : 120;
+      // Logic tick: overclock to 480 on any panel ≥120Hz so input/physics
+      // run at max granularity regardless of display rate.
       _setSetting("fps_cap", cap);
       _setSetting("logic_tick_rate", "480");
       console.log(`[monitor] ${maxHz}Hz display detected — enabling ${cap} FPS cap + 480Hz logic tick`);
     } else {
+      // High-Hz monitor removed: drop the FPS cap back to 0 (panel-locked),
+      // but LEAVE logic_tick_rate alone — the user may have deliberately set
+      // 480 on a 60Hz panel for the aim-feel win (which is what aimer.pro
+      // does; the physics overclock works independently of display Hz).
       _setSetting("fps_cap", 0);
-      _setSetting("logic_tick_rate", "60");
-      console.log(`[monitor] high-refresh display removed (${maxHz}Hz) — restoring defaults`);
+      console.log(`[monitor] high-refresh display removed (${maxHz}Hz) — restoring FPS cap (logic tick unchanged)`);
     }
   } catch (e) {}
 };
@@ -151,10 +171,56 @@ const applyHighRefreshPath = () => {
 // synchronous full-file disk write is debounced so rapid toggles/sliders
 // don't pile up JSON writes.
 let _settingsSaveTimer = null;
+// ── Thermal-Sustained Guard — tunables + state ─────────────────────────────
+// The M4 Air is fanless, so sustained load is a real concern. BUT the guard
+// must never rewrite settings.logic_tick_rate: it used to, which silently
+// walked the user from 480 → 60 within ~90s (a high tick rate legitimately
+// uses more CPU than the old 80% threshold) and then needed ~9 minutes of
+// idle to climb back one rung at a time. From the user's side that is
+// indistinguishable from "the client keeps defaulting me back to 60".
+//
+// Now the saved setting is the user's choice and is left alone; the guard
+// applies an IN-MEMORY override that is pushed to the renderer and lifts the
+// moment CPU recovers.
+const _TG_SAMPLE_MS = 10000;
+const _TG_HIGH_CPU = 95;      // step DOWN above this (Electron reports >100% on multi-core)
+const _TG_LOW_CPU = 65;       // step UP below this
+const _TG_HIGH_TICKS = 6;     // N consecutive high samples before stepping down (~60s)
+const _TG_LOW_TICKS = 4;      // N consecutive low samples before restoring (~40s)
+const _TG_FLOOR = 120;        // hard floor — never throttle below this
+const _TG_LADDER = [60, 120, 240, 480];
+let _tgHighTicks = 0;
+let _tgLowTicks = 0;
+let _tgTimer = null;
+let _tgThrottled = false;
+let _tgOverride = null;       // runtime tick (Hz), or null = use the user's setting
+
+const _tgUserTick = () => Number(settings.logic_tick_rate) || 60;
+
+// Push the effective tick to the renderer. Clamped to the user's own setting
+// and to the floor, so moving the slider always wins immediately.
+const _tgPushOverride = () => {
+  if (!gameWindow || gameWindow.isDestroyed()) return;
+  const userTick = _tgUserTick();
+  const ov = _tgOverride === null
+    ? null
+    : String(Math.max(_TG_FLOOR, Math.min(Number(_tgOverride), userTick)));
+  gameWindow.webContents.send("thermal-tick-override", ov);
+};
+
 const _setSetting = (key, value) => {
   if (key === "fps_cap") value = Number(value) || 0;
   settings[key] = value;
   if (key === "fps_cap") applyFrameCap();
+  if (key === "logic_tick_rate") {
+    // User moved the tick slider by hand — drop any thermal override so the
+    // new choice takes effect immediately.
+    _tgOverride = null;
+    _tgThrottled = false;
+    _tgHighTicks = 0;
+    _tgLowTicks = 0;
+    _tgPushOverride();
+  }
   if (gameWindow && !gameWindow.isDestroyed()) {
     gameWindow.webContents.send("settings-updated", settings);
   }
@@ -625,56 +691,85 @@ const PATCHES = [
     needle: "'range','min':'1','max':'3','step':'0.1'",
     replacement: "'range','min':'1','max':'5','step':'0.1'",
   },
-  // Fix 0.5x time scaling and eliminate delta jitter at uncapped FPS: use instantaneous frame-accurate delta.
-  // window.__dawnTickMul (set from the menu "Logic Tick Rate") divides the
-  // re-schedule interval, overclocking the game's self-scheduling main
-  // loop: 2 = ~120Hz logic, 4 = ~240Hz logic. Default 1 = stock 60Hz.
-  // EXPERIMENTAL: if the world starts moving at 2x speed the tick uses a
-  // fixed dt instead of the measured one — set the rate back to 60.
+  // Fix 0.5x time scaling and eliminate delta jitter at uncapped FPS.
+  // Correct 480Hz overclock:
+  //   (a) Save iM*tickMul as the effective FPS so the SELF-SCHEDULING
+  //       setTimeout (which reads window.wmwMNWn = iM) fires at
+  //       1000/(iM*tickMul) ms = ~2.08ms @ tickMul=8 (480Hz), not ~16.6ms.
+  //   (b) Pass the MEASURED real-wall delta UN-DIVIDED to the step so
+  //       world-time advances 1:1 with wall-clock regardless of tick
+  //       rate. Dividing _dt by tickMul while the scheduler still fired
+  //       at 60Hz was the slow-motion bug (world advanced 1/8 speed at
+  //       480Hz setting).
+  //   The sub-millisecond setTimeout bypass in switches.js + a postMessage
+  //   pump (installed in preload/game.js) beats Chromium's 4ms nested-
+  //   timeout clamp so the 2ms schedule actually fires at ~480Hz.
   {
     name: 'gameLoopDeltaFix',
     needle: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),iL[dhc(0x3918)](0x1/ iM*window[dhc(0x243e)])",
-    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;window.__dawnTickDt=_dt;iL[dhc(0x3918)](_dt/(window.__dawnTickMul||1)*window[dhc(0x243e)]);})()",
+    replacement: "window['wmwMNWn']=iM*(window.__dawnTickMul||1),iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0x1/iM):(1/iM);window.__lastMainDelta=_now;window.__dawnTickDt=_dt;window.__dawnEffIpm=iM*(window.__dawnTickMul||1);iL[dhc(0x3918)](_dt*window[dhc(0x243e)]);})()",
   },
   {
     name: 'interpDelaySlider',
     needle: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:0x3,j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];",
     replacement: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:(window.__dawnInterpDelayMs?Math.max(1,Math.min(j0['length']-1,Math.round(window.__dawnInterpDelayMs/33))):0x3),j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];window.__dawnInterpSnapshots=j4;",
   },
+  // Remote playback clocks — these advance a remote entity's playback
+  // timestamp by one tick's worth of time.
+  //
+  // The game is FIXED-TIMESTEP: the tick needle is `step(0x1/iM*timeScale)`
+  // with iM = 60, i.e. dt is the constant 1/60 s, and `wmwMNWn = iM` shows
+  // iM is UPSTREAM of the fps global (we only rewrite the global, never iM).
+  // So `0x3e8*iM` in these scopes is a CONSTANT per tick — it does not
+  // shrink when we make ticks more frequent.
+  //
+  //   stock : 60 ticks/s  x K = 1 s of remote time per real second  ✔
+  //   OC x8 : 480 ticks/s x K = 8 s of remote time per real second  ✘
+  //
+  // Therefore these must be DIVIDED by the tick multiplier. The previous
+  // `* (window.__dawnTickMul||1)` was written for the OLD broken overclock
+  // (which divided dt by tickMul while leaving the tick rate at 60Hz — there
+  // the clock ran 1/8 slow and multiplying was right). Under the corrected
+  // overclock it made remote entities run tickMul² = 64x too fast, i.e.
+  // players teleporting and clipping through walls.
+  //
+  // Escape hatch: set window.__dawnRemoteClockDiv = 1 in the console if your
+  // bundle turns out to recompute iM from wmwMNWn (then no scaling is
+  // needed at all). No rebuild required.
   {
     name: 'remotePlaybackClockA',
     needle: "iX['WnwNMmWw']+=0x3e8*iM*(0x1+",
-    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1)*(0x1+",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM/(window.__dawnRemoteClockDiv||window.__dawnTickMul||1)*(0x1+",
   },
   {
     name: 'remotePlaybackClockA2',
     needle: "iX[deT(0x2087)]+=0x3e8*iM*(0x1+",
-    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1)*(0x1+",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM/(window.__dawnRemoteClockDiv||window.__dawnTickMul||1)*(0x1+",
   },
   {
     name: 'remotePlaybackClockB',
     needle: "iX['WnwNMmWw']+=0x3e8*iM*1.1",
-    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1)*1.1",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM/(window.__dawnRemoteClockDiv||window.__dawnTickMul||1)*1.1",
   },
   {
     name: 'remotePlaybackClockB2',
     needle: "iX[deT(0x2087)]+=0x3e8*iM*1.1",
-    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1)*1.1",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM/(window.__dawnRemoteClockDiv||window.__dawnTickMul||1)*1.1",
   },
   {
     name: 'remotePlaybackClockC',
     needle: "iX[deT(0x2087)]+=0x3e8*iM;",
-    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1);",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM/(window.__dawnRemoteClockDiv||window.__dawnTickMul||1);",
   },
   {
     name: 'remotePlaybackClockC2',
     needle: "iX['WnwNMmWw']+=0x3e8*iM;",
-    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1);",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM/(window.__dawnRemoteClockDiv||window.__dawnTickMul||1);",
   },
   {
     name: 'remotePlaybackClockRollback',
     needle: "iX[deT(0x2087)]-=0x3e8*iM,",
-    replacement: "iX[deT(0x2087)]-=0x3e8*iM*(window.__dawnTickMul||1),",
+    replacement: "iX[deT(0x2087)]-=0x3e8*iM/(window.__dawnRemoteClockDiv||window.__dawnTickMul||1),",
   },
 ];
 
@@ -1219,17 +1314,9 @@ const startMemoryWatchdog = () => {
 // frames mid-match. Watch main-process CPU and step the logic tick rate down
 // before throttling kicks in, restore it once thermals have recovered.
 // Hysteresis (different up/down thresholds + timers) prevents flapping.
-const _TG_SAMPLE_MS = 10000;
-const _TG_HIGH_CPU = 80;      // step DOWN above this
-const _TG_LOW_CPU = 50;       // step UP below this
-const _TG_HIGH_TICKS = 3;     // N consecutive high samples before stepping down (~30s)
-const _TG_LOW_TICKS = 18;     // N consecutive low samples before restoring (~180s)
-const _TG_TICK_DOWN = ["480", "240", "120", "60"];
-const _TG_TICK_UP = ["60", "120", "240", "480"];
-let _tgHighTicks = 0;
-let _tgLowTicks = 0;
-let _tgTimer = null;
-let _tgThrottled = false;
+// (Thermal-guard tunables + state live in the block above _setSetting,
+//  because _setSetting() touches them during start-up.)
+
 
 const _getMainCpu = () => {
   try {
@@ -1247,13 +1334,25 @@ const _getMainCpu = () => {
 };
 
 const _tgStepTick = (down) => {
-  const current = String(settings.logic_tick_rate || "60");
-  const ladder = down ? _TG_TICK_DOWN : _TG_TICK_UP;
-  const idx = ladder.indexOf(current);
-  if (idx === -1) return false;
-  const next = ladder[Math.min(idx + 1, ladder.length - 1)];
-  if (!next || next === current) return false;
-  _setSetting("logic_tick_rate", next);
+  const userTick = _tgUserTick();
+  if (userTick <= _TG_FLOOR) return false;          // user is at/below the floor — hands off
+  const cur = Number(_tgOverride === null ? userTick : _tgOverride);
+  const ladder = down
+    ? [..._TG_LADDER].sort((a, b) => b - a)         // descending (stepping down)
+    : [..._TG_LADDER].sort((a, b) => a - b);        // ascending  (recovering)
+  const next = ladder.find((v) => (down ? v < cur : v > cur));
+  if (!next) return false;                          // end of the ladder
+  if (down && next < _TG_FLOOR) return false;       // hard floor
+  const from = cur;
+  if (!down && next >= userTick) {
+    _tgOverride = null;                             // fully recovered → user's own choice
+    _tgPushOverride();
+    console.log(`[thermal] CPU recovered — tick ${from}Hz → ${userTick}Hz (your setting, untouched)`);
+    return true;
+  }
+  _tgOverride = String(next);
+  _tgPushOverride();
+  console.warn(`[thermal] CPU high — tick ${from}Hz → ${next}Hz (runtime only; setting stays ${userTick}Hz)`);
   return true;
 };
 
@@ -1272,19 +1371,21 @@ const startThermalGuard = () => {
     if (cpu >= _TG_HIGH_CPU) {
       _tgHighTicks++;
       _tgLowTicks = 0;
-      if (_tgHighTicks >= _TG_HIGH_TICKS && !_tgThrottled) {
+      if (_tgHighTicks >= _TG_HIGH_TICKS) {
+        // No `&& !_tgThrottled`: if it is still hot after another window we
+        // must be allowed to step down again (down to _TG_FLOOR).
         if (_tgStepTick(true)) {
           _tgThrottled = true;
-          console.warn(`[thermal] CPU ${cpu.toFixed(0)}% for ${_TG_HIGH_TICKS * (_TG_SAMPLE_MS / 1000)}s — stepping tick ${settings.logic_tick_rate}Hz`);
+          _tgHighTicks = 0;
         }
       }
     } else if (cpu <= _TG_LOW_CPU) {
       _tgLowTicks++;
       _tgHighTicks = 0;
-      if (_tgLowTicks >= _TG_LOW_TICKS && _tgThrottled) {
+      if (_tgLowTicks >= _TG_LOW_TICKS) {
         if (_tgStepTick(false)) {
-          _tgThrottled = false;
-          console.log(`[thermal] recovered (CPU ${cpu.toFixed(0)}%) — restoring tick ${settings.logic_tick_rate}Hz`);
+          _tgLowTicks = 0;
+          if (_tgOverride === null) _tgThrottled = false;
         }
       }
     } else {
