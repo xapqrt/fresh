@@ -2034,352 +2034,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   initWeaponMods();
 
-  const handleLobby = () => {
-    const warmupAPI = () => {
-      fetch("https://kirka.onrender.com");
-    };
-    warmupAPI();
-
-    initRoomPresets();
-    const applyLobbyChanges = () => {
-
-      lobbyKeybindReminder(settings);
-      lobbyNews(settings);
-      juiceDiscordButton();
-
-      const addLobbyPing = (window.addLobbyPing = () => {
-        if (!settings.lobby_ping) {
-          document.querySelector(".lobby-ping")?.remove();
-          return;
-        }
-        if (document.querySelector(".lobby-ping")) return;
-        const regionEl = document.querySelector(".select-region");
-        const pingEl = document.createElement("div");
-        pingEl.className = "lobby-ping";
-        pingEl.textContent = "FETCHING...";
-        regionEl.insertAdjacentElement("beforebegin", pingEl);
-
-        let running = false;
-        let intervalId = null;
-
-        const updatePing = async () => {
-          if (running) return;
-          running = true;
-          const region = regionEl.textContent.trim();
-          const ms = await ipcRenderer.invoke("ping-url", `https://${region}.kirka.io`);
-
-          if (!settings.lobby_ping) {
-            clearInterval(intervalId);
-            pingEl.remove();
-            running = false;
-            return;
-          }
-
-          pingEl.classList.remove("good", "medium", "bad");
-
-          if (ms !== null) {
-            pingEl.textContent = `${ms} ms`;
-            if (ms <= 50) {
-              pingEl.classList.add("good");
-            } else if (ms <= 150) {
-              pingEl.classList.add("medium");
-            } else {
-              pingEl.classList.add("bad");
-            }
-          } else {
-            pingEl.textContent = "offline";
-            pingEl.classList.add("bad");
-          }
-
-          running = false;
-        };
-
-        updatePing();
-        intervalId = setInterval(updatePing, 1000);
-      });
-      addLobbyPing();
-
-      const createQuickJoin = (window.createQuickJoin = () => {
-        if (!settings.quickjoin_button) return;
-        const playContent = document.querySelector(".play-content");
-        const playContentUp = playContent.querySelector(".play-content-up");
-
-        const quickJoin = playContentUp.cloneNode(true);
-        quickJoin.classList.add("quickjoin-container");
-        quickJoin.querySelector(".create-btn")?.remove();
-        quickJoin.style.marginBottom = ".5rem";
-
-        const quickJoinBtn = quickJoin.childNodes[0];
-        quickJoinBtn.classList.remove("join-btn");
-        quickJoinBtn.classList.add("quickjoin-btn");
-        quickJoinBtn.id = "quickjoin-btn";
-        quickJoinBtn.textContent = "QUICKJOIN";
-        quickJoinBtn.title = "Join the lobby/game link from your clipboard";
-
-        if (quickJoinBtn.dataset.listenerAttached) return;
-        quickJoinBtn.dataset.listenerAttached = "true";
-
-        quickJoinBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-
-          navigator.clipboard.readText().then((text) => {
-            const regions = ["EU~", "NA~", "ASIA~", "SA~", "OCEANIA~", "INDIA~"];
-
-            if (text === "") {
-              customNotification({
-                message: `Empty Clipboard!<br>Copy a lobby/game code first`,
-              });
-              return;
-            } else if (!text.startsWith("https://kirka.io/") && !regions.some((prefix) => text.startsWith(prefix))) {
-              customNotification({
-                message: `<span style="color: gray;">${text.length > 100 ? text.slice(0, 100) + "…" : text}</span> is not a valid lobby/game code!`,
-              });
-              return;
-            }
-
-            playContentUp.querySelector(".join-btn")?.click();
-
-            const observer = new MutationObserver(() => {
-              const input = document.querySelector("#join-modal-modal .input");
-              if (input) {
-                input.value = text;
-                input.dispatchEvent(new Event("input", { bubbles: true }));
-                document.querySelector(".btn")?.click();
-                observer.disconnect();
-              }
-            });
-
-            observer.observe(document.body, { childList: true, subtree: true });
-          });
-        });
-
-        playContent.insertBefore(quickJoin, playContentUp);
-      });
-
-      document.addEventListener("juice-settings-changed", ({ detail }) => {
-        if (detail.setting === "quickjoin_button") {
-          settings.quickjoin_button = detail.value;
-          const el = document.querySelector(".quickjoin-container");
-          if (el) el.remove();
-          else createQuickJoin();
-        }
-      });
-
-      createQuickJoin();
-
-      const customizations = JSON.parse(localStorage.getItem("juice-customizations"));
-
-      shortIdCard = document.querySelector(".avatar-info .username").textContent.trim().split("#")[1];
-      localStorage.setItem("user-id", shortIdCard);
-
-      const lobbyNickname = document.querySelector(".team-section .heads .nickname");
-
-      const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
-      const entry = nicknames[shortIdCard];
-
-      if (entry?.nickname) {
-        const textNode = [...lobbyNickname.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
-        if (textNode) textNode.textContent = entry.nickname;
-      }
-
-      const applyUserCustomizations = (window.applyUserCustomizations = () => {
-        const customs = customizations?.find((c) => c.shortId === shortIdCard);
-        if (!customs) return;
-
-        if (customs.gradient) {
-          lobbyNickname.style.display = "inline-block";
-          lobbyNickname.style.background = `linear-gradient(${customs.gradient.rot}, ${customs.gradient.stops.join(", ")})`;
-          lobbyNickname.style.backgroundClip = "text";
-          lobbyNickname.style.webkitBackgroundClip = "text";
-          lobbyNickname.style.color = "transparent";
-          lobbyNickname.style.fontWeight = "700";
-          lobbyNickname.style.textShadow = customs.gradient.shadow || "0 0 0 transparent";
-          lobbyNickname.style.display = "flex";
-          lobbyNickname.style.alignItems = "flex-end";
-          lobbyNickname.style.gap = "0.25rem";
-          lobbyNickname.style.overflow = "unset !important";
-
-          if (settings.animations) window.applyGradientAnimation(lobbyNickname, customs);
-        } else {
-          lobbyNickname.style = "display: flex; align-items: flex-end; gap: 0.25rem; overflow: unset !important;";
-        }
-
-        if (lobbyNickname.querySelector(".juice-badges")) return;
-
-        const badgesElem = document.createElement("div");
-        badgesElem.style = "display: flex; gap: 0.25rem; align-items: center; width: 0;";
-        badgesElem.className = "juice-badges";
-        lobbyNickname.appendChild(badgesElem);
-
-        const badgeStyle = "height: 32px; width: auto;";
-
-        if (customs.discord) {
-          const linkedBadge = document.createElement("img");
-          linkedBadge.src = "https://juice.irrvlo.xyz/linked.png";
-          linkedBadge.style = badgeStyle;
-          badgesElem.appendChild(linkedBadge);
-        }
-
-        if (customs.booster) {
-          const boosterBadge = document.createElement("img");
-          boosterBadge.src = "https://juice.irrvlo.xyz/booster.png";
-          boosterBadge.style = badgeStyle;
-          badgesElem.appendChild(boosterBadge);
-        }
-
-        if (customs.badges && customs.badges.length) {
-          customs.badges.forEach((badge) => {
-            const img = document.createElement("img");
-
-            if (badge.startsWith("/") || badge.match(/^[A-Za-z]:\\/)) {
-              const filePath = badge.replace(/\\/g, "/");
-              img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
-            } else {
-              img.src = badge;
-            }
-
-            img.style = badgeStyle;
-            badgesElem.appendChild(img);
-          });
-        }
-      });
-
-      const applyClanCustomizations = (window.applyClanCustomizations = () => {
-        const clancustomizations = JSON.parse(localStorage.getItem("juice-clans"));
-        const clan = document.querySelector(".team-section .heads .clan-tag");
-        if (!clan) return;
-        if (!settings.customizations) return;
-
-        const userClan = Array.from(clan.childNodes)
-          .filter((node) => node.nodeType === Node.TEXT_NODE)
-          .map((node) => node.textContent.trim())
-          .join(" ")
-          .trim();
-        const customs = clancustomizations.find((c) => c.clan === userClan);
-        if (!customs) return;
-
-        if (customs.gradient) {
-          clan.style.display = "inline-block";
-          clan.style.background = `linear-gradient(${customs.gradient.rot}, ${customs.gradient.stops.join(", ")})`;
-          clan.style.backgroundClip = "text";
-          clan.style.webkitBackgroundClip = "text";
-          clan.style.color = "transparent";
-          clan.style.fontWeight = "700";
-          clan.style.textShadow = customs.gradient.shadow || "0 0 0 transparent";
-
-          if (settings.animations) window.applyGradientAnimation(clan, customs);
-        }
-      });
-
-      window.applyGradientAnimation = (element, customs) => {
-        if (settings.animations && customs.animated) {
-          element.style.backgroundSize = "200% 200%";
-          element.style.animation = "animated-gradient 3s linear infinite";
-        }
-      };
-
-      window.removeUserCustomizations = () => {
-        document.querySelectorAll(".nickname").forEach((nick) => {
-          nick.style = "display: flex; align-items: flex-end; gap: 0.25rem;";
-          nick.querySelector(".juice-badges")?.remove();
-        });
-      };
-
-      window.removeClanCustomizations = () => {
-        document.querySelectorAll(".clan-tag").forEach((cl) => {
-          cl.style = "display: flex; align-items: flex-end; gap: 0.25rem;";
-        });
-      };
-
-      window.removeGradientAnimations = () => {
-        document.querySelectorAll(".nickname").forEach((nick) => {
-          nick.style.animation = "none";
-          nick.style.backgroundSize = "100% 100%";
-        });
-        document.querySelectorAll(".clan-tag").forEach((cl) => {
-          cl.style.animation = "none";
-          cl.style.backgroundSize = "100% 100%";
-        });
-      };
-
-      if (settings.customizations) applyUserCustomizations();
-      if (settings.customizations) applyClanCustomizations();
-
-      const formatMoney = (money) => {
-        if (!money.dataset.formatted) {
-          const text = (money.innerText || money.textContent || "").trim();
-          const raw = parseInt(text);
-          if (!isNaN(raw)) {
-            money.innerHTML = money.innerHTML.replace(text, raw.toLocaleString());
-            money.dataset.formatted = true;
-          }
-        }
-      };
-
-      const formatExpValues = (expValues) => {
-        if (!expValues.dataset.formatted) {
-          const text = (expValues.innerText || expValues.textContent || "").trim();
-          if (text.includes("/")) {
-            const [current, max] = text.split("/");
-            if (current !== undefined && max !== undefined) {
-              expValues.innerText = `${parseInt(current).toLocaleString()}/${parseInt(max).toLocaleString()}`;
-              expValues.dataset.formatted = true;
-            }
-          }
-        }
-      };
-
-      const formatQuests = () => {
-        const quests = document.querySelectorAll(".right-interface > .quests .quest");
-
-        quests.forEach((quest) => {
-          const amounts = quest.querySelectorAll(".amount");
-          const progress2 = quest.querySelector(".progress2");
-
-          if (progress2 && !progress2.dataset.formatted) {
-            const text = (progress2.innerText || progress2.textContent || "").trim();
-            if (text.includes("/")) {
-              const [progressAmt, progressMax] = text.split("/");
-              if (progressAmt !== undefined && progressMax !== undefined) {
-                progress2.innerText = `${parseInt(progressAmt).toLocaleString()}/${parseInt(progressMax).toLocaleString()}`;
-                progress2.dataset.formatted = true;
-              }
-            }
-          }
-
-          amounts.forEach((amount) => {
-            if (!amount.dataset.formatted) {
-              const text = (amount.innerText || amount.textContent || "").split(" ")[0];
-              const raw = parseInt(text);
-              if (!isNaN(raw)) {
-                amount.innerHTML = amount.innerHTML.replace(text, raw.toLocaleString());
-                amount.dataset.formatted = true;
-              }
-            }
-          });
-        });
-      };
-
-      const interval = setInterval(() => {
-        const moneys = document.querySelectorAll(".moneys > .card-cont");
-        const expValues = document.querySelector(".exp-values");
-        const quests = document.querySelectorAll(".right-interface > .quests .quest");
-        const questsTabs = document.querySelector(".right-interface > .quests .tabs");
-
-        if (moneys.length && expValues && quests.length && questsTabs) {
-          clearInterval(interval);
-          moneys.forEach(formatMoney);
-          formatExpValues(expValues);
-          formatQuests();
-
-          questsTabs.addEventListener("click", formatQuests);
-        }
-      }, 100);
-    };
-
-    waitForElement(".avatar-info .username", applyLobbyChanges);
-  };
-
   const handleServers = async () => {
 
     let mapImages = {};
@@ -2466,12 +2120,13 @@ window.addEventListener("DOMContentLoaded", async () => {
         else removeSpectateButton(server);
       });
 
+      const listCont = document.querySelector(".servers .list-cont>.list");
       new MutationObserver(() => {
         document.querySelectorAll(".server").forEach((server) => {
           if (server.classList.contains("is-locked") && settings.spectate_full_games) addSpectateButton(server);
           else removeSpectateButton(server);
         });
-      }).observe(document.querySelector(".servers .list-cont>.list"), { childList: true, characterData: true });
+      }).observe(listCont || document.body, { childList: true, characterData: true });
     }
 
     if (!window.servers) {
@@ -2633,30 +2288,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     if (settings.show_trade_buttons) createTradeButtons();
 
-    if (settings.accept_on_click) {
-      const tradeElem = e.target.closest(".servers .trade");
-      const tradeButtonElem = e.target.closest(".servers .trade .button");
-      if (!tradeElem) return;
-      if (tradeButtonElem) return;
-
-      const boldText = tradeElem.querySelector(".bold");
-      if (!boldText) return;
-
-      const text = boldText.innerText;
-      const match = text.match(/\/trade accept (\d+)/);
-      if (!match) return;
-
-      const tradeId = match[1];
-      selectedTradeId = tradeId;
-
-      tradeElem.classList.add("selected");
-
-      if (!input || !sendBtn) return;
-
-      input.value = `/trade accept ${tradeId}`;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      sendBtn.click();
-    }
+    // Accept-on-click trade handling lives in the Menu class (menu.js
+    // `handleButtons`), which owns a document-level click listener with access
+    // to the event target. The inline copy that used to sit here referenced an
+    // `e` that was never in scope, so whenever accept_on_click was enabled it
+    // threw a ReferenceError on every visit to the servers page and killed the
+    // chat command helper that is registered later in this function.
 
     const setInputValue = (value, cursorPos) => {
       const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
@@ -2977,6 +2614,352 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   };
 
+  const handleLobby = () => {
+    const warmupAPI = () => {
+      fetch("https://kirka.onrender.com");
+    };
+    warmupAPI();
+
+    initRoomPresets();
+    const applyLobbyChanges = () => {
+
+      lobbyKeybindReminder(settings);
+      lobbyNews(settings);
+      juiceDiscordButton();
+
+      const addLobbyPing = (window.addLobbyPing = () => {
+        if (!settings.lobby_ping) {
+          document.querySelector(".lobby-ping")?.remove();
+          return;
+        }
+        if (document.querySelector(".lobby-ping")) return;
+        const regionEl = document.querySelector(".select-region");
+        const pingEl = document.createElement("div");
+        pingEl.className = "lobby-ping";
+        pingEl.textContent = "FETCHING...";
+        regionEl.insertAdjacentElement("beforebegin", pingEl);
+
+        let running = false;
+        let intervalId = null;
+
+        const updatePing = async () => {
+          if (running) return;
+          running = true;
+          const region = regionEl.textContent.trim();
+          const ms = await ipcRenderer.invoke("ping-url", `https://${region}.kirka.io`);
+
+          if (!settings.lobby_ping) {
+            clearInterval(intervalId);
+            pingEl.remove();
+            running = false;
+            return;
+          }
+
+          pingEl.classList.remove("good", "medium", "bad");
+
+          if (ms !== null) {
+            pingEl.textContent = `${ms} ms`;
+            if (ms <= 50) {
+              pingEl.classList.add("good");
+            } else if (ms <= 150) {
+              pingEl.classList.add("medium");
+            } else {
+              pingEl.classList.add("bad");
+            }
+          } else {
+            pingEl.textContent = "offline";
+            pingEl.classList.add("bad");
+          }
+
+          running = false;
+        };
+
+        updatePing();
+        intervalId = setInterval(updatePing, 1000);
+      });
+      addLobbyPing();
+
+      const createQuickJoin = (window.createQuickJoin = () => {
+        if (!settings.quickjoin_button) return;
+        const playContent = document.querySelector(".play-content");
+        const playContentUp = playContent.querySelector(".play-content-up");
+
+        const quickJoin = playContentUp.cloneNode(true);
+        quickJoin.classList.add("quickjoin-container");
+        quickJoin.querySelector(".create-btn")?.remove();
+        quickJoin.style.marginBottom = ".5rem";
+
+        const quickJoinBtn = quickJoin.childNodes[0];
+        quickJoinBtn.classList.remove("join-btn");
+        quickJoinBtn.classList.add("quickjoin-btn");
+        quickJoinBtn.id = "quickjoin-btn";
+        quickJoinBtn.textContent = "QUICKJOIN";
+        quickJoinBtn.title = "Join the lobby/game link from your clipboard";
+
+        if (quickJoinBtn.dataset.listenerAttached) return;
+        quickJoinBtn.dataset.listenerAttached = "true";
+
+        quickJoinBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+
+          navigator.clipboard.readText().then((text) => {
+            const regions = ["EU~", "NA~", "ASIA~", "SA~", "OCEANIA~", "INDIA~"];
+
+            if (text === "") {
+              customNotification({
+                message: `Empty Clipboard!<br>Copy a lobby/game code first`,
+              });
+              return;
+            } else if (!text.startsWith("https://kirka.io/") && !regions.some((prefix) => text.startsWith(prefix))) {
+              customNotification({
+                message: `<span style="color: gray;">${text.length > 100 ? text.slice(0, 100) + "…" : text}</span> is not a valid lobby/game code!`,
+              });
+              return;
+            }
+
+            playContentUp.querySelector(".join-btn")?.click();
+
+            const observer = new MutationObserver(() => {
+              const input = document.querySelector("#join-modal-modal .input");
+              if (input) {
+                input.value = text;
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                document.querySelector(".btn")?.click();
+                observer.disconnect();
+              }
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+          });
+        });
+
+        playContent.insertBefore(quickJoin, playContentUp);
+      });
+
+      document.addEventListener("juice-settings-changed", ({ detail }) => {
+        if (detail.setting === "quickjoin_button") {
+          settings.quickjoin_button = detail.value;
+          const el = document.querySelector(".quickjoin-container");
+          if (el) el.remove();
+          else createQuickJoin();
+        }
+      });
+
+      createQuickJoin();
+
+      const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
+
+      shortIdCard = document.querySelector(".avatar-info .username").textContent.trim().split("#")[1];
+      localStorage.setItem("user-id", shortIdCard);
+
+      const lobbyNickname = document.querySelector(".team-section .heads .nickname");
+
+      const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
+      const entry = nicknames[shortIdCard];
+
+      if (entry?.nickname) {
+        const textNode = [...lobbyNickname.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
+        if (textNode) textNode.textContent = entry.nickname;
+      }
+
+      const applyUserCustomizations = (window.applyUserCustomizations = () => {
+        const customs = customizations?.find((c) => c.shortId === shortIdCard);
+        if (!customs) return;
+
+        if (customs.gradient) {
+          lobbyNickname.style.display = "inline-block";
+          lobbyNickname.style.background = `linear-gradient(${customs.gradient.rot}, ${customs.gradient.stops.join(", ")})`;
+          lobbyNickname.style.backgroundClip = "text";
+          lobbyNickname.style.webkitBackgroundClip = "text";
+          lobbyNickname.style.color = "transparent";
+          lobbyNickname.style.fontWeight = "700";
+          lobbyNickname.style.textShadow = customs.gradient.shadow || "0 0 0 transparent";
+          lobbyNickname.style.display = "flex";
+          lobbyNickname.style.alignItems = "flex-end";
+          lobbyNickname.style.gap = "0.25rem";
+          lobbyNickname.style.overflow = "unset !important";
+
+          if (settings.animations) window.applyGradientAnimation(lobbyNickname, customs);
+        } else {
+          lobbyNickname.style = "display: flex; align-items: flex-end; gap: 0.25rem; overflow: unset !important;";
+        }
+
+        if (lobbyNickname.querySelector(".juice-badges")) return;
+
+        const badgesElem = document.createElement("div");
+        badgesElem.style = "display: flex; gap: 0.25rem; align-items: center; width: 0;";
+        badgesElem.className = "juice-badges";
+        lobbyNickname.appendChild(badgesElem);
+
+        const badgeStyle = "height: 32px; width: auto;";
+
+        if (customs.discord) {
+          const linkedBadge = document.createElement("img");
+          linkedBadge.src = "https://juice.irrvlo.xyz/linked.png";
+          linkedBadge.style = badgeStyle;
+          badgesElem.appendChild(linkedBadge);
+        }
+
+        if (customs.booster) {
+          const boosterBadge = document.createElement("img");
+          boosterBadge.src = "https://juice.irrvlo.xyz/booster.png";
+          boosterBadge.style = badgeStyle;
+          badgesElem.appendChild(boosterBadge);
+        }
+
+        if (customs.badges && customs.badges.length) {
+          customs.badges.forEach((badge) => {
+            const img = document.createElement("img");
+
+            if (badge.startsWith("/") || badge.match(/^[A-Za-z]:\\/)) {
+              const filePath = badge.replace(/\\/g, "/");
+              img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
+            } else {
+              img.src = badge;
+            }
+
+            img.style = badgeStyle;
+            badgesElem.appendChild(img);
+          });
+        }
+      });
+
+      const applyClanCustomizations = (window.applyClanCustomizations = () => {
+        const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
+        const clan = document.querySelector(".team-section .heads .clan-tag");
+        if (!clan) return;
+        if (!settings.customizations) return;
+
+        const userClan = Array.from(clan.childNodes)
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent.trim())
+          .join(" ")
+          .trim();
+        const customs = clancustomizations.find((c) => c.clan === userClan);
+        if (!customs) return;
+
+        if (customs.gradient) {
+          clan.style.display = "inline-block";
+          clan.style.background = `linear-gradient(${customs.gradient.rot}, ${customs.gradient.stops.join(", ")})`;
+          clan.style.backgroundClip = "text";
+          clan.style.webkitBackgroundClip = "text";
+          clan.style.color = "transparent";
+          clan.style.fontWeight = "700";
+          clan.style.textShadow = customs.gradient.shadow || "0 0 0 transparent";
+
+          if (settings.animations) window.applyGradientAnimation(clan, customs);
+        }
+      });
+
+      window.applyGradientAnimation = (element, customs) => {
+        if (settings.animations && customs.animated) {
+          element.style.backgroundSize = "200% 200%";
+          element.style.animation = "animated-gradient 3s linear infinite";
+        }
+      };
+
+      window.removeUserCustomizations = () => {
+        document.querySelectorAll(".nickname").forEach((nick) => {
+          nick.style = "display: flex; align-items: flex-end; gap: 0.25rem;";
+          nick.querySelector(".juice-badges")?.remove();
+        });
+      };
+
+      window.removeClanCustomizations = () => {
+        document.querySelectorAll(".clan-tag").forEach((cl) => {
+          cl.style = "display: flex; align-items: flex-end; gap: 0.25rem;";
+        });
+      };
+
+      window.removeGradientAnimations = () => {
+        document.querySelectorAll(".nickname").forEach((nick) => {
+          nick.style.animation = "none";
+          nick.style.backgroundSize = "100% 100%";
+        });
+        document.querySelectorAll(".clan-tag").forEach((cl) => {
+          cl.style.animation = "none";
+          cl.style.backgroundSize = "100% 100%";
+        });
+      };
+
+      if (settings.customizations) applyUserCustomizations();
+      if (settings.customizations) applyClanCustomizations();
+
+      const formatMoney = (money) => {
+        if (!money.dataset.formatted) {
+          const text = (money.innerText || money.textContent || "").trim();
+          const raw = parseInt(text);
+          if (!isNaN(raw)) {
+            money.innerHTML = money.innerHTML.replace(text, raw.toLocaleString());
+            money.dataset.formatted = true;
+          }
+        }
+      };
+
+      const formatExpValues = (expValues) => {
+        if (!expValues.dataset.formatted) {
+          const text = (expValues.innerText || expValues.textContent || "").trim();
+          if (text.includes("/")) {
+            const [current, max] = text.split("/");
+            if (current !== undefined && max !== undefined) {
+              expValues.innerText = `${parseInt(current).toLocaleString()}/${parseInt(max).toLocaleString()}`;
+              expValues.dataset.formatted = true;
+            }
+          }
+        }
+      };
+
+      const formatQuests = () => {
+        const quests = document.querySelectorAll(".right-interface > .quests .quest");
+
+        quests.forEach((quest) => {
+          const amounts = quest.querySelectorAll(".amount");
+          const progress2 = quest.querySelector(".progress2");
+
+          if (progress2 && !progress2.dataset.formatted) {
+            const text = (progress2.innerText || progress2.textContent || "").trim();
+            if (text.includes("/")) {
+              const [progressAmt, progressMax] = text.split("/");
+              if (progressAmt !== undefined && progressMax !== undefined) {
+                progress2.innerText = `${parseInt(progressAmt).toLocaleString()}/${parseInt(progressMax).toLocaleString()}`;
+                progress2.dataset.formatted = true;
+              }
+            }
+          }
+
+          amounts.forEach((amount) => {
+            if (!amount.dataset.formatted) {
+              const text = (amount.innerText || amount.textContent || "").split(" ")[0];
+              const raw = parseInt(text);
+              if (!isNaN(raw)) {
+                amount.innerHTML = amount.innerHTML.replace(text, raw.toLocaleString());
+                amount.dataset.formatted = true;
+              }
+            }
+          });
+        });
+      };
+
+      const interval = setInterval(() => {
+        const moneys = document.querySelectorAll(".moneys > .card-cont");
+        const expValues = document.querySelector(".exp-values");
+        const quests = document.querySelectorAll(".right-interface > .quests .quest");
+        const questsTabs = document.querySelector(".right-interface > .quests .tabs");
+
+        if (moneys.length && expValues && quests.length && questsTabs) {
+          clearInterval(interval);
+          moneys.forEach(formatMoney);
+          formatExpValues(expValues);
+          formatQuests();
+
+          questsTabs.addEventListener("click", formatQuests);
+        }
+      }, 100);
+    };
+
+    waitForElement(".avatar-info .username", applyLobbyChanges);
+  };
+
   let disconnectObservers = () => {};
 
   const handleProfile = () => {
@@ -3236,7 +3219,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
         const customs = customizations.find((c) => c.shortId === shortId);
 
-        const currentUser = JSON.parse(localStorage.getItem("current-user"));
+        const currentUser = JSON.parse(localStorage.getItem("current-user") || "null");
         const isOwnProfile = currentUser && currentUser.shortId === shortId;
 
         const savedGradient = JSON.parse(localStorage.getItem("gradientSettings") || "null");
@@ -3902,7 +3885,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       };
 
       kills.addEventListener("DOMSubtreeModified", checkReset);
-      deaths.addEventListener("DOMSubtreeModified", checkReset);
+      if (deaths) deaths.addEventListener("DOMSubtreeModified", checkReset);
     };
 
     let assistsCount = 0;
@@ -4053,8 +4036,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    const customizations = JSON.parse(localStorage.getItem("juice-customizations"));
-    const clancustomizations = JSON.parse(localStorage.getItem("juice-clans"));
+    const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
+    const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
 
     if (!document.querySelector(".desktop-game-interface")) {
       return;
@@ -4716,7 +4699,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     function applyClanCustomizations() {
-      const clancustomizations = JSON.parse(localStorage.getItem("juice-clans"));
+      const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
       const clans = document.querySelectorAll(".clan-name");
       clans.forEach((clan) => {
         const clanName = clan.textContent.trim();
@@ -4975,7 +4958,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   const handleMarket = () => {
     const interval = setInterval(() => {
-      if (!window.location.href === `${base_url}hub/market`) {
+      if (!window.location.href.startsWith(`${base_url}hub/market`)) {
         clearInterval(interval);
         return;
       }
@@ -5257,7 +5240,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     const applyCustomizations = () => {
       if (settings.customizations) {
-        const customizations = JSON.parse(localStorage.getItem("juice-customizations"));
+        const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
 
         document.querySelectorAll(".friend").forEach((friend) => {
           const shortId = friend.querySelector(".friend-id").innerText;
@@ -6129,9 +6112,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
     if (url.startsWith(`${base_url}games`)) handleInGame();
     if (url.startsWith(`${base_url}hub/ranked`)) handleInGame();
-    if (url.startsWith(`${base_url}servers/`)) handleServers();
-    if (url.startsWith(`${base_url}profile/`)) handleProfile();
-    if (url === `${base_url}hub/clans/champions-league`) handleClans();
+    if (url.startsWith(`${base_url}servers/`)) {
+      handleServers().catch((e) => console.warn("[Dawn] handleServers error:", e));
+    }
+    if (url.startsWith(`${base_url}profile/`)) {
+      handleProfile().catch((e) => console.warn("[Dawn] handleProfile error:", e));
+      return;
+    }
+    if (url === `${base_url}hub/clans/champions-league`) {
+      handleClans().catch((e) => console.warn("[Dawn] handleClans error:", e));
+      return;
+    }
     if (url === `${base_url}hub/market`) handleMarket();
     if (url === `${base_url}friends`) handleFriends();
     if (url === `${base_url}inventory`) handleInventory();
@@ -6149,9 +6140,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
     if (url.startsWith(`${base_url}games`)) handleInGame();
     if (url.startsWith(`${base_url}hub/ranked`)) handleInGame();
-    if (url.startsWith(`${base_url}servers/`)) handleServers();
-    if (url.startsWith(`${base_url}profile/`)) handleProfile();
-    if (url === `${base_url}hub/clans/champions-league`) handleClans();
+    if (url.startsWith(`${base_url}servers/`)) {
+      handleServers().catch((e) => console.warn("[Dawn] handleServers error:", e));
+    }
+    if (url.startsWith(`${base_url}profile/`)) {
+      handleProfile().catch((e) => console.warn("[Dawn] handleProfile error:", e));
+      return;
+    }
+    if (url === `${base_url}hub/clans/champions-league`) {
+      handleClans().catch((e) => console.warn("[Dawn] handleClans error:", e));
+      return;
+    }
     if (url === `${base_url}hub/market`) handleMarket();
     if (url === `${base_url}friends`) handleFriends();
     if (url === `${base_url}inventory`) handleInventory();

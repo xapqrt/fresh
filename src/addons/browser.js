@@ -88,6 +88,7 @@ const getData = async (key) => {
 };
 
 const filterItems = (data, key) => {
+  if (!Array.isArray(data)) return [];
   let filtered = data;
   if (key === "css") {
     filtered = data.filter((i) => convert(i, key).availability === "free");
@@ -411,10 +412,13 @@ window.openLightbox = (urls, index = 0) => {
         }
       }
     };
+    // Register the global keydown handler exactly once per lightbox lifetime.
+    // (Previously this ran on every openLightbox() call, stacking duplicate
+    // listeners that would fire N copies of the handler per keypress.)
+    document.addEventListener("keydown", keyHandler);
 
     overlay.addEventListener("click", close);
   } else overlay.querySelector("#info").textContent = "Ctrl+C to copy";
-  document.addEventListener("keydown", keyHandler);
 
   updateLightbox();
   overlay.classList.add("active");

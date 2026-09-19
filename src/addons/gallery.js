@@ -8,10 +8,11 @@ const initGallery = () => {
   }
 
   function isOnImport(el) {
-    return el.closest(".import-button") !== null;
+    return !!el && el.closest(".import-button") !== null;
   }
 
   const galleryContainer = document.getElementById("gallery-options");
+  if (!galleryContainer) return;
   let galleryFolderPath = null;
 
   (async () => {
