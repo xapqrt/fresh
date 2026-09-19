@@ -33,6 +33,10 @@ function installBhopHook(getSettings) {
     if (jump === 'KeyW' || jump === 'w') _jumpChar = 'w';
     else if (jump === 'KeyQ' || jump === 'q') _jumpChar = 'q';
     else _jumpChar = 'q';
+    // Hold time comes from settings; main.js enforces the same value on its
+    // own monotonic clock as a GC-stall-proof backstop.
+    var hold = Number(s && s.bhop_hold_ms);
+    if (hold >= 1 && hold <= 60) _holdMs = hold;
   }
 
   function _enabled() {

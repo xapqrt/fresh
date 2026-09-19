@@ -126,7 +126,10 @@
     "bhop_enabled": true,
     "bhop_jump": "KeyQ",
     "bhop_toggle": "Shift",
-    "interp_delay_ms": 75
+    "bhop_hold_ms": 4,
+    "interp_delay_ms": 75,
+    "thermal_guard": true,
+    "high_refresh_auto": true
   },
   "allowed_urls": [
     "https://kirka.io/",

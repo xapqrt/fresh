@@ -1477,6 +1477,14 @@ class Menu {
         slider: ".range.menu-blur",
         input: ".value.menu-blur",
       },
+      {
+        slider: ".range.interp-delay",
+        input: ".value.interp-delay",
+      },
+      {
+        slider: ".range.bhop-hold",
+        input: ".value.bhop-hold",
+      },
     ];
 
     sliderMap.forEach(({ slider, input }) => {

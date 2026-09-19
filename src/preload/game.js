@@ -117,10 +117,40 @@ function toggleFrameTimeLogger() {
 
   function _sample() {
     const stats = window.__dawnTelemetry.getStats();
-    if (stats.ready) {
-      _frameTimeOverlay.textContent =
-        `FT min ${stats.minFt}ms  max ${stats.maxFt}ms  avg ${stats.avgFt}ms  jitter ${stats.jitter}ms\nFPS ${stats.fps}  stutters: ${stats.stutters}  p99: ${stats.p99Ft}ms`;
+    if (!stats.ready) {
+      if (_frameTimeActive) _ftRAF = requestAnimationFrame(_sample);
+      return;
     }
+
+    // Live engine metrics exposed by the patched game loop (main.js PATCHES):
+    //  __dawnTickDt         — measured main-loop delta in seconds
+    //  __dawnTickMul        — logic overclock multiplier (1=60Hz … 8=480Hz)
+    //  __dawnInterpSnapshots — snapshots-back the remote buffer is rendering
+    //  __dawnInterpDelayMs  — target interp delay slider value in ms
+    const tickDt = Number(window.__dawnTickDt);
+    const tickMul = window.__dawnTickMul || 1;
+    const tickSamples = window.__dawnTickSamples || (window.__dawnTickSamples = []);
+    if (tickDt > 0) {
+      tickSamples.push(tickDt);
+      if (tickSamples.length > 120) tickSamples.shift();
+    }
+    let lines = [
+      `Render FPS ${stats.fps}  (rAF)`,
+      `FT min ${stats.minFt}ms  max ${stats.maxFt}ms  avg ${stats.avgFt}ms  p99 ${stats.p99Ft}ms`,
+      `FT jitter ${stats.jitter}ms  stutters ${stats.stutters}  hitches ${stats.hitches}`,
+    ];
+    if (tickSamples.length) {
+      const sum = tickSamples.reduce((a, b) => a + b, 0);
+      const avgDt = sum / tickSamples.length; // seconds between loop invocations
+      const logicHz = Math.round(1 / avgDt);
+      lines.push(`Logic Tick ~${logicHz}Hz  (mul x${tickMul})`);
+    }
+    const snaps = Number(window.__dawnInterpSnapshots);
+    const targetMs = Number(window.__dawnInterpDelayMs) || 75;
+    if (Number.isFinite(snaps)) {
+      lines.push(`Interp ${snaps} snapshots  (~${snaps * 33}ms, target ${targetMs}ms)`);
+    }
+    _frameTimeOverlay.textContent = lines.join("\n");
     if (_frameTimeActive) _ftRAF = requestAnimationFrame(_sample);
   }
   _ftRAF = requestAnimationFrame(_sample);

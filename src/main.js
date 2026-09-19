@@ -119,11 +119,39 @@ const applyFrameCap = () => {
   } catch (e) {}
 };
 
-// Settings: in-memory update + renderer broadcast are immediate; the
+// ── High-refresh monitor path ─────────────────────────────────────────────
+// If an external 120Hz+ display is connected, auto-lift the FPS cap and
+// logic tick to actually use it; the 60Hz built-in panel can't present
+// faster than 60, so this no-ops there. Restores defaults when the high-Hz
+// display goes away. Opt-out via the high_refresh_auto setting.
+const _HIGH_REFRESH_THRESHOLD = 120;
+let _highRefreshActive = false;
+const applyHighRefreshPath = () => {
+  if (settings.high_refresh_auto === false) return;
+  try {
+    const displays = screen.getAllDisplays();
+    const maxHz = displays.reduce((m, d) => Math.max(m, Math.round(d.refreshRate) || 0), 0);
+    const wantsHigh = maxHz >= _HIGH_REFRESH_THRESHOLD;
+    if (wantsHigh === _highRefreshActive) return;
+    _highRefreshActive = wantsHigh;
+    if (wantsHigh) {
+      const cap = maxHz >= 240 ? 240 : maxHz >= 144 ? 144 : 120;
+      _setSetting("fps_cap", cap);
+      _setSetting("logic_tick_rate", "480");
+      console.log(`[monitor] ${maxHz}Hz display detected — enabling ${cap} FPS cap + 480Hz logic tick`);
+    } else {
+      _setSetting("fps_cap", 0);
+      _setSetting("logic_tick_rate", "60");
+      console.log(`[monitor] high-refresh display removed (${maxHz}Hz) — restoring defaults`);
+    }
+  } catch (e) {}
+};
+
+// ── Settings: in-memory update + renderer broadcast are immediate; the
 // synchronous full-file disk write is debounced so rapid toggles/sliders
 // don't pile up JSON writes.
 let _settingsSaveTimer = null;
-ipcMain.on("update-setting", (e, key, value) => {
+const _setSetting = (key, value) => {
   if (key === "fps_cap") value = Number(value) || 0;
   settings[key] = value;
   if (key === "fps_cap") applyFrameCap();
@@ -135,7 +163,8 @@ ipcMain.on("update-setting", (e, key, value) => {
     _settingsSaveTimer = null;
     store.set("settings", settings);
   }, 250);
-});
+};
+ipcMain.on("update-setting", (e, key, value) => _setSetting(key, value));
 ipcMain.handle("dump-cookies", async () => {
   const domains = ['https://kirka.io', 'https://api2.kirka.io', 'https://login.xsolla.com', 'https://accounts.google.com'];
   const result = {};
@@ -147,17 +176,45 @@ ipcMain.handle("dump-cookies", async () => {
   }
   return result;
 });
+// ── Main-process bhop timing (GC-stall-proof release) ─────────────────────
+// The renderer's rAF bhop loop queues key-ups during flight — but a GC hitch
+// stalls rAF, so the release lands late and the jump key stays held too long,
+// overflowing the game's jump buffer and breaking the chain. The main
+// process's monotonic clock is immune to renderer stalls, so arm a *backstop*
+// release for the jump key at press time, a little longer than the renderer's
+// own hold (holdMs + ~0.2ms jitter): in the normal case the renderer's key-up
+// arrives first and clears this timer; only on a stall does it fire and bound
+// the hold. Strafe pulse keys intentionally stay held, so this only applies
+// to the jump key.
+const _bhopJumpCode = () => {
+  const j = settings.bhop_jump || "KeyQ";
+  return (j === "KeyW" || j === "w" || j === "W") ? "W" : "Q";
+};
+const _BhopBackstop = {};
 ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   _lastBhopFlush = Date.now();
+  const jumpCode = _bhopJumpCode();
+  const holdMs = Math.min(Math.max(Number(settings.bhop_hold_ms) || 4, 1), 60);
   for (const { key, down } of events) {
     const code = key.length === 1 ? key.toUpperCase() : key;
     if (down) {
       if (_syntheticKeys.has(code)) continue;
       _syntheticKeys.add(code);
+      if (code === jumpCode) {
+        clearTimeout(_BhopBackstop[code]);
+        _BhopBackstop[code] = setTimeout(() => {
+          if (!gameWindow || gameWindow.isDestroyed()) return;
+          if (_syntheticKeys.has(code)) {
+            _syntheticKeys.delete(code);
+            gameWindow.webContents.sendInputEvent({ type: "keyUp", keyCode: code });
+          }
+        }, holdMs + 3);
+      }
     } else {
       if (!_syntheticKeys.has(code)) continue;
       _syntheticKeys.delete(code);
+      if (code === jumpCode) clearTimeout(_BhopBackstop[code]);
     }
     gameWindow.webContents.sendInputEvent({
       type: down ? "keyDown" : "keyUp",
@@ -577,12 +634,12 @@ const PATCHES = [
   {
     name: 'gameLoopDeltaFix',
     needle: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),iL[dhc(0x3918)](0x1/ iM*window[dhc(0x243e)])",
-    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;iL[dhc(0x3918)](_dt/(window.__dawnTickMul||1)*window[dhc(0x243e)]);})()",
+    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;window.__dawnTickDt=_dt;iL[dhc(0x3918)](_dt/(window.__dawnTickMul||1)*window[dhc(0x243e)]);})()",
   },
   {
     name: 'interpDelaySlider',
     needle: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:0x3,j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];",
-    replacement: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:(window.__dawnInterpDelayMs?Math.max(1,Math.min(j0['length']-1,Math.round(window.__dawnInterpDelayMs/33))):0x3),j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];",
+    replacement: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:(window.__dawnInterpDelayMs?Math.max(1,Math.min(j0['length']-1,Math.round(window.__dawnInterpDelayMs/33))):0x3),j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];window.__dawnInterpSnapshots=j4;",
   },
   {
     name: 'remotePlaybackClockA',
@@ -988,6 +1045,8 @@ const createWindow = () => {
   initPatchProtocol();
   const customFiles = initResourceSwapper();
   startMemoryWatchdog();
+  startThermalGuard();
+  applyHighRefreshPath();
 
   const bundleFilter = { urls: ['*://kirka.io/assets/js/app.*.js', '*://kirka.io/assets/js/chunk-*.js'] };
   // Broad filter over the game's proxy domains AND their subdomains (assets
@@ -1155,6 +1214,86 @@ const startMemoryWatchdog = () => {
   }, _MEM_WATCH_MS);
 };
 
+// ── Thermal-Sustained Guard ────────────────────────────────────────────────
+// The M4 Air is fanless: sustained high CPU throttles the GPU SoC and drops
+// frames mid-match. Watch main-process CPU and step the logic tick rate down
+// before throttling kicks in, restore it once thermals have recovered.
+// Hysteresis (different up/down thresholds + timers) prevents flapping.
+const _TG_SAMPLE_MS = 10000;
+const _TG_HIGH_CPU = 80;      // step DOWN above this
+const _TG_LOW_CPU = 50;       // step UP below this
+const _TG_HIGH_TICKS = 3;     // N consecutive high samples before stepping down (~30s)
+const _TG_LOW_TICKS = 18;     // N consecutive low samples before restoring (~180s)
+const _TG_TICK_DOWN = ["480", "240", "120", "60"];
+const _TG_TICK_UP = ["60", "120", "240", "480"];
+let _tgHighTicks = 0;
+let _tgLowTicks = 0;
+let _tgTimer = null;
+let _tgThrottled = false;
+
+const _getMainCpu = () => {
+  try {
+    let total = 0;
+    let count = 0;
+    for (const m of app.getAppMetrics()) {
+      const cpu = m.cpu && typeof m.cpu.percentCPUUsage === "number" ? m.cpu.percentCPUUsage : 0;
+      total += cpu;
+      count++;
+    }
+    return count ? total / count : 0;
+  } catch (e) {
+    return 0;
+  }
+};
+
+const _tgStepTick = (down) => {
+  const current = String(settings.logic_tick_rate || "60");
+  const ladder = down ? _TG_TICK_DOWN : _TG_TICK_UP;
+  const idx = ladder.indexOf(current);
+  if (idx === -1) return false;
+  const next = ladder[Math.min(idx + 1, ladder.length - 1)];
+  if (!next || next === current) return false;
+  _setSetting("logic_tick_rate", next);
+  return true;
+};
+
+const startThermalGuard = () => {
+  if (_tgTimer || settings.thermal_guard === false) return;
+  _tgTimer = setInterval(() => {
+    if (!gameWindow || gameWindow.isDestroyed()) return;
+    if (settings.thermal_guard === false) return;
+    if (!_navIsMatch(gameWindow.webContents.getURL())) {
+      // Only act mid-match — lobby idle CPU spikes shouldn't change settings.
+      _tgHighTicks = 0;
+      _tgLowTicks = 0;
+      return;
+    }
+    const cpu = _getMainCpu();
+    if (cpu >= _TG_HIGH_CPU) {
+      _tgHighTicks++;
+      _tgLowTicks = 0;
+      if (_tgHighTicks >= _TG_HIGH_TICKS && !_tgThrottled) {
+        if (_tgStepTick(true)) {
+          _tgThrottled = true;
+          console.warn(`[thermal] CPU ${cpu.toFixed(0)}% for ${_TG_HIGH_TICKS * (_TG_SAMPLE_MS / 1000)}s — stepping tick ${settings.logic_tick_rate}Hz`);
+        }
+      }
+    } else if (cpu <= _TG_LOW_CPU) {
+      _tgLowTicks++;
+      _tgHighTicks = 0;
+      if (_tgLowTicks >= _TG_LOW_TICKS && _tgThrottled) {
+        if (_tgStepTick(false)) {
+          _tgThrottled = false;
+          console.log(`[thermal] recovered (CPU ${cpu.toFixed(0)}%) — restoring tick ${settings.logic_tick_rate}Hz`);
+        }
+      }
+    } else {
+      _tgHighTicks = 0;
+      _tgLowTicks = 0;
+    }
+  }, _TG_SAMPLE_MS);
+};
+
 const _t0 = Date.now();
 const _perf = (label) => console.log(`[perf] ${label} +${Date.now() - _t0}ms`);
 
@@ -1180,6 +1319,14 @@ const initGame = () => {
 
 app.on("ready", () => {
   _perf('app ready');
+  // Watch for display attach/detach — high-refresh path re-evaluates when the
+  // panel layout changes (e.g. plugging in a 144Hz monitor). Registered only
+  // after ready: `screen` reads are unsafe earlier.
+  try {
+    screen.on("display-added", () => applyHighRefreshPath());
+    screen.on("display-removed", () => applyHighRefreshPath());
+    screen.on("display-metrics-changed", () => applyHighRefreshPath());
+  } catch (e) {}
   initGame();
   try { os.setPriority(process.pid, -10); } catch (e) {}
   try {

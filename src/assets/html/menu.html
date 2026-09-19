@@ -390,6 +390,14 @@
             </select>
           </div>
         </div>
+        <div class="option">
+          <span>Bhop Hold Time</span>
+          <span class="description">How long each auto-hop holds the jump key (ms). Lower = tighter chain, but too low can drop hops. Default 4ms.</span>
+          <div class="right">
+            <input type="text" placeholder="4" maxlength="3" class="value bhop-hold" data-setting="bhop_hold_ms" />
+            <input type="range" min="1" max="60" step="1" class="range bhop-hold" data-setting="bhop_hold_ms" />
+          </div>
+        </div>
       </div>
 
       <div id="inner-tabs" class="juice tabs">
@@ -892,6 +900,22 @@
           <div class="checkbox">
             <input type="checkbox" id="auto_fullscreen" data-setting="auto_fullscreen" />
             <label for="auto_fullscreen"></label>
+          </div>
+        </div>
+        <div class="option">
+          <span>Thermal Guard</span>
+          <span class="description">M4 Air has no fan. If CPU stays above 80% for ~30s mid-match, automatically steps the logic tick down (480→240→120) to avoid thermal throttling, and restores it after ~3 min of low load. Live-updatable.</span>
+          <div class="switch">
+            <input type="checkbox" id="thermal_guard" data-setting="thermal_guard" />
+            <label for="thermal_guard"></label>
+          </div>
+        </div>
+        <div class="option">
+          <span>High Refresh Auto</span>
+          <span class="description">When an external 120Hz+ monitor is connected, automatically lift the FPS cap and logic tick to use it; restore defaults when it's unplugged. No-ops on the built-in 60Hz panel.</span>
+          <div class="switch">
+            <input type="checkbox" id="high_refresh_auto" data-setting="high_refresh_auto" />
+            <label for="high_refresh_auto"></label>
           </div>
         </div>
       </div>
