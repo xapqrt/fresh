@@ -169,9 +169,14 @@
 
 .menu {
     font-family: "Satoshi", sans-serif;
+    box-sizing: border-box;
     display: none;
-    width: 60rem;
-    height: 40rem;
+    width: var(--menu-width, 960px);
+    height: var(--menu-height, 640px);
+    min-width: 520px;
+    min-height: 320px;
+    max-width: calc(100vw - 2rem);
+    max-height: calc(100vh - 5rem);
     background: rgba(var(--dark), calc(var(--menu-opacity, 100) / 100));
     border-radius: 0.75rem;
     border: 1px solid rgba(var(--border));
@@ -200,7 +205,7 @@
     transform: translateX(-50%);
     background: rgba(var(--dark), calc(var(--menu-opacity, 100) / 100));
     color: rgba(var(--light), 1);
-    padding: 0.4rem 1.5rem;
+    padding: 0.4rem 0.75rem 0.4rem 1.5rem;
     border-radius: 0.5rem 0.5rem 0 0;
     font-size: 1.2rem;
     font-weight: bold;
@@ -212,6 +217,43 @@
     border: 1px solid rgba(var(--border));
     border-bottom: none;
     border-radius: calc(var(--corner-roundness, 12) * 1px) calc(var(--corner-roundness, 12) * 1px) 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.menu-titlebar .title-label {
+    pointer-events: none;
+}
+
+.menu-titlebar .titlebar-buttons {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    pointer-events: auto;
+}
+
+.menu-titlebar .titlebar-buttons i {
+    cursor: pointer;
+    font-size: 0.95rem;
+    color: rgba(var(--opacity-half));
+    transition: color 0.15s, background 0.15s;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.35rem;
+}
+
+.menu-titlebar .titlebar-buttons i:hover {
+    color: rgb(var(--light));
+    background: rgba(var(--hover-light));
+}
+
+.menu-titlebar .titlebar-buttons .tb-expand.active {
+    color: rgb(var(--orange));
 }
 
 .menu-titlebar:active {
@@ -265,6 +307,50 @@
 }
 
 .menu .checkbox input:checked+label:after {
+    left: 1.75rem;
+}
+
+.menu .switch {
+    position: relative;
+    display: inline-block;
+    width: 3rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+}
+
+.menu .switch input {
+    display: none;
+}
+
+.menu .switch label {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(var(--border));
+    cursor: pointer;
+    transition: background 0.3s;
+    border-radius: 1rem;
+}
+
+.menu .switch input:checked+label {
+    background: rgba(var(--orange));
+}
+
+.menu .switch label:after {
+    content: "";
+    position: absolute;
+    top: 0.25rem;
+    left: 0.25rem;
+    width: 1rem;
+    height: 1rem;
+    background: white;
+    border-radius: 50%;
+    transition: left 0.3s;
+}
+
+.menu .switch input:checked+label:after {
     left: 1.75rem;
 }
 
@@ -640,6 +726,22 @@
     outline: none;
     appearance: none;
     cursor: pointer;
+}
+
+.menu .custom-select {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.menu .custom-select select {
+    width: 100%;
+    max-width: 14rem;
+    padding-right: 2rem;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
 }
 
 .menu option {
@@ -3454,4 +3556,131 @@ button:focus,
 
 .menu .nowrap {
     white-space: nowrap;
+}
+
+/* ===== Resize grip ===== */
+.menu .resize-grip {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    cursor: nwse-resize;
+    z-index: 20;
+    opacity: 0.9;
+    background:
+        linear-gradient(135deg, transparent 50%, rgba(var(--opacity-quarter)) 50%);
+    border-bottom-right-radius: inherit;
+}
+
+.menu .resize-grip:hover {
+    background:
+        linear-gradient(135deg, transparent 45%, rgba(var(--orange), 0.5) 45%, rgba(var(--orange), 0.5) 55%, transparent 55%),
+        linear-gradient(135deg, transparent 50%, rgba(var(--opacity-half)) 50%);
+}
+
+/* ===== Compact card grid (minimum space, genius layout) ===== */
+.menu .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+    gap: 1rem;
+    align-items: start;
+    width: 100%;
+}
+
+/* single-column when the menu is truly narrow */
+.menu .option-group {
+    min-width: 0;
+}
+
+.menu .option-group.wide {
+    grid-column: 1 / -1;
+}
+
+.menu .group-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(var(--opacity-half));
+    padding: 0 0.25rem 0.5rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(var(--border));
+}
+
+.menu .option {
+    min-height: 2.25rem;
+    gap: 0.65rem;
+}
+
+.menu .option .description {
+    line-height: 1.35;
+    max-width: 100%;
+}
+
+.menu .option>.left {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.menu .option>.left span {
+    overflow-wrap: break-word;
+}
+
+/* keep controls right-aligned and give text fields room */
+.menu .option .textfield {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-shrink: 1;
+    max-width: 100%;
+}
+
+.menu .option .textfield input[type="text"] {
+    width: 13rem;
+    max-width: 100%;
+    padding-right: 2rem;
+}
+
+.menu .option .clear-field {
+    position: absolute;
+    right: 0.55rem;
+    color: rgba(var(--opacity-half));
+    cursor: pointer;
+    transition: color 0.15s;
+}
+
+.menu .option .clear-field:hover {
+    color: rgb(var(--red));
+}
+
+/* ---- responsive: collapse grid to 1 column on narrow menus ---- */
+@media (max-width: 40rem) {
+    .menu {
+        min-width: 0;
+    }
+}
+
+/* Single-column fallback for small content widths (menu resized small) */
+.menu.resized-small .grid {
+    grid-template-columns: 1fr;
+}
+
+/* Compact density when user shrinks the menu below a comfortable width */
+.menu.resized-small .option-group {
+    gap: 0.75rem;
+    padding: 0.75rem;
+}
+
+/* ===== Minimized ("roll-up") state: keep the titlebar pill in place ===== */
+.menu[data-minimized="true"] {
+    height: 0;
+    min-height: 0;
+    overflow: visible;
+}
+
+.menu[data-minimized="true"] .sidebar,
+.menu[data-minimized="true"] .content,
+.menu[data-minimized="true"] .resize-grip {
+    display: none;
 }
