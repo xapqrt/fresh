@@ -77,6 +77,12 @@ function applySwitches() {
   app.commandLine.appendSwitch("enable-gpu-rasterization");
   app.commandLine.appendSwitch("enable-features",
     "ParallelDownloading,RawPointerEvents,PointerLockOptions,CanvasOopRasterization");
+  // RawPointerEvents is a Blink *runtime*-enabled feature. Depending on the
+  // Chromium build it is only honoured through --enable-blink-features, not
+  // --enable-features, so pass it both ways. Without this the preload's
+  // pointerrawupdate bridge (the un-coalesced mouse stream) has no events to
+  // consume and aim stays clamped to one sample per frame.
+  app.commandLine.appendSwitch("enable-blink-features", "RawPointerEvents");
   app.commandLine.appendSwitch("force-color-profile", "srgb");
   app.commandLine.appendSwitch("disable-touch-events");
   // Raise the GPU watchdog timeout so a long frame (common at 480Hz tick

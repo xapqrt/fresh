@@ -123,6 +123,83 @@
   } catch (e) { console.warn('[dawn-input] raw mouse install failed:', e); }
 })();
 
+// ── Un-coalesced mouse stream (this is the actual "480Hz mouse" fix) ──────
+// Chromium COALESCES mousemove and hands it to the page once per animation
+// frame. On a 60Hz panel that is exactly one mouse sample every 16.67ms no
+// matter how fast the game ticks — so aim feels locked to 60fps even with a
+// 480Hz logic tick, and 7 of every 8 ticks get a zero mouse delta.
+//
+// `pointerrawupdate` (Blink RawPointerEvents) delivers those same movements
+// UN-COALESCED at the device's real rate (125–1000Hz). We re-dispatch each
+// raw sample as a mousemove on the same target so the game's own handler runs
+// at that rate. Total movement per second is IDENTICAL (the samples sum to
+// the same delta), so sensitivity does not change — the movement is simply
+// spread across ticks instead of landing as one lump per frame, which is what
+// the per-tick input ring + client-side prediction actually want.
+//
+// The browser's coalesced mousemove is then SUPPRESSED, because its
+// movementX is literally the sum of the samples we just delivered — keeping
+// it would double every mouse movement. Our synthetic events are
+// isTrusted:false so they pass the suppressor untouched.
+(function installRawMouseStream() {
+  try {
+    if (typeof window.MouseEvent === "undefined") return;
+
+    const stats = { raw: 0, coalesced: 0, hz: 0, active: false };
+    window.__dawnRawMouse = true;      // set false in console to disable
+    window.__dawnRawMouseStats = stats;
+
+    let _seen = 0;                     // raw samples in the current 1s window
+    let _winStart = 0;
+
+    const _onRaw = (e) => {
+      if (!document.pointerLockElement) return;        // only while aiming
+      if (window.__dawnRawMouse === false) return;
+      if (e.pointerType && e.pointerType !== "mouse") return;
+
+      const now = performance.now();
+      if (!_winStart) _winStart = now;
+      _seen++;
+      if (now - _winStart >= 1000) {
+        stats.hz = Math.round((_seen * 1000) / (now - _winStart));
+        _seen = 0;
+        _winStart = now;
+      }
+      stats.raw++;
+      stats.active = true;
+
+      const ev = new MouseEvent("mousemove", {
+        bubbles: true, cancelable: true, composed: true, view: window,
+        screenX: e.screenX, screenY: e.screenY,
+        clientX: e.clientX, clientY: e.clientY,
+        movementX: e.movementX || 0, movementY: e.movementY || 0,
+        buttons: e.buttons, button: -1,
+        ctrlKey: e.ctrlKey, shiftKey: e.shiftKey,
+        altKey: e.altKey, metaKey: e.metaKey,
+        relatedTarget: null,
+      });
+      const t = e.target;
+      (t && t.dispatchEvent ? t : document).dispatchEvent(ev);
+    };
+
+    const _onMove = (e) => {
+      if (!e.isTrusted) return;                        // our own synthetic
+      if (window.__dawnRawMouse === false) return;
+      if (!document.pointerLockElement) return;
+      if (!stats.active) return;                       // raw never arrived → untouched
+      stats.coalesced++;
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+    };
+
+    window.addEventListener("pointerrawupdate", _onRaw, true);
+    window.addEventListener("mousemove", _onMove, true);
+    console.log("[dawn-input] un-coalesced mouse stream armed (pointerrawupdate -> mousemove)");
+  } catch (e) {
+    console.warn("[dawn-input] raw mouse stream failed:", e);
+  }
+})();
+
 // ── Desynchronized canvas (Windows/Linux only) ────────────────────────────
 // macOS ANGLE/Metal has a confirmed desynchronized → WindowServer stall
 // (see weapon-hook.js note). On Windows/Linux this removes one buffer-swap
