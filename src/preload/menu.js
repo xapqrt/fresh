@@ -114,11 +114,14 @@ class Menu {
   setKeybind() {
     const kbEl = this.menu.querySelector(".keybind");
     if (kbEl) kbEl.innerText = `Press ${this.settings.menu_keybind || "ShiftRight"} to toggle menu`;
-    if (!this.localStorage.getItem("juice-menu")) {
-      this.localStorage.setItem("juice-menu", this.menuToggle.getAttribute("data-active"));
-    } else {
-      this.menuToggle.setAttribute("data-active", this.localStorage.getItem("juice-menu"));
-    }
+    // The menu always starts CLOSED. The old behavior restored the last
+    // open/closed state from localStorage on every launch, so whenever the
+    // client was last closed (or the page reloaded/crashed) with the menu
+    // open, it just popped up by default over the game on startup. The
+    // toggles below still persist the state; it's simply never applied at
+    // boot anymore, and any stale saved "true" is cleared.
+    this.menuToggle.setAttribute("data-active", "false");
+    this.localStorage.removeItem("juice-menu");
   }
 
   dragMenu() {
