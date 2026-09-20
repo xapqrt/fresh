@@ -133,6 +133,34 @@ let _failLoadAttempt = 0;
 // ── Synthetic key tracking ────────────────────────────────────────────────
 const _syntheticKeys = new Set();
 let _bhopStaleTimer = null;
+let _focusInputResetPending = false;
+let _focusInputResetTimer = null;
+
+// macOS desktop switching commonly uses Control+Arrow. If the Control key-up
+// lands while Dawn is unfocused, Chromium can keep the modifier logically
+// pressed and macOS turns every primary click into a secondary click. Release
+// trusted modifier state as soon as the BrowserWindow regains focus. A right
+// mouse-up also clears a button release that may have been lost off-desktop.
+function sanitizeInputAfterFocus(includeMouseRelease = false) {
+  if (process.platform !== "darwin" || !gameWindow || gameWindow.isDestroyed() || !gameWindow.isFocused()) return;
+  for (const keyCode of ["Control", "Shift", "Alt", "Command"]) {
+    try {
+      gameWindow.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers: [] });
+    } catch (error) {}
+  }
+  if (!includeMouseRelease) return;
+  try {
+    const [width, height] = gameWindow.getContentSize();
+    gameWindow.webContents.sendInputEvent({
+      type: "mouseUp",
+      x: Math.max(0, Math.floor(width / 2)),
+      y: Math.max(0, Math.floor(height / 2)),
+      button: "right",
+      clickCount: 1,
+      modifiers: [],
+    });
+  } catch (error) {}
+}
 
 function releaseSyntheticKeys() {
   clearTimeout(_bhopStaleTimer);
@@ -1117,6 +1145,9 @@ const createWindow = () => {
     if (_activePerformanceBenchmark) {
       _failPerformanceBenchmark(_activePerformanceBenchmark, "Benchmark stopped because the game window closed.");
     }
+    clearTimeout(_focusInputResetTimer);
+    _focusInputResetTimer = null;
+    _focusInputResetPending = false;
     releaseSyntheticKeys();
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
@@ -1125,7 +1156,23 @@ const createWindow = () => {
   });
 
   gameWindow.on("blur", () => {
+    clearTimeout(_focusInputResetTimer);
+    _focusInputResetTimer = null;
+    _focusInputResetPending = true;
     releaseSyntheticKeys();
+  });
+
+  gameWindow.on("focus", () => {
+    if (!_focusInputResetPending) return;
+    _focusInputResetPending = false;
+    sanitizeInputAfterFocus(true);
+    // Repeat modifier key-up after AppKit's focus hand-off has completed. Do
+    // not repeat mouse-up, so an intentional click immediately after return
+    // cannot be shortened by the safety pass.
+    _focusInputResetTimer = setTimeout(() => {
+      _focusInputResetTimer = null;
+      sanitizeInputAfterFocus(false);
+    }, 32);
   });
 
   gameWindow.webContents.on('before-input-event', (event, input) => {
@@ -1784,6 +1831,9 @@ app.on("child-process-gone", (_, details) => {
 });
 
 app.on("before-quit", () => {
+  clearTimeout(_focusInputResetTimer);
+  _focusInputResetTimer = null;
+  _focusInputResetPending = false;
   stopPerformanceLock();
   releaseSyntheticKeys();
   globalShortcut.unregisterAll();

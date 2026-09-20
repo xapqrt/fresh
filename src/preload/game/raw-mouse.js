@@ -152,6 +152,11 @@ function installRawMouse(options = {}) {
   const documentObject = options.documentObject || globalThis.document;
   const settings = options.settings || {};
   const now = options.now || (() => windowObject.performance.now());
+  const platform = options.platform || (typeof process !== "undefined" ? process.platform : "");
+  const isInMatch = options.isInMatch || (() => {
+    const pathname = documentObject.location?.pathname || windowObject.location?.pathname || "";
+    return pathname.startsWith("/games") || pathname.startsWith("/hub/ranked");
+  });
 
   if (!windowObject || !documentObject || typeof windowObject.addEventListener !== "function") {
     return unsupportedApi("DOM event APIs unavailable");
@@ -190,6 +195,8 @@ function installRawMouse(options = {}) {
     movementMatches: 0,
     movementMismatches: 0,
     lockChanges: 0,
+    focusResets: 0,
+    normalizedControlClicks: 0,
     unadjusted: {
       attempts: 0,
       accepted: 0,
@@ -203,6 +210,22 @@ function installRawMouse(options = {}) {
   const unadjustedEnabled = () => boolSetting(settings, "raw_mouse_input", false);
   const isPointerLocked = () => Boolean(documentObject.pointerLockElement);
   const isMoving = (event) => (Number(event?.movementX) || 0) !== 0 || (Number(event?.movementY) || 0) !== 0;
+
+  const resetBridgeState = (countFocusReset = true) => {
+    rawActiveForLock = false;
+    bridgeDisabledForLock = false;
+    pendingRawX = 0;
+    pendingRawY = 0;
+    pendingRawEvents = 0;
+    consecutiveMovementMismatches = 0;
+    lastRawAt = 0;
+    lastNativeAt = 0;
+    state.pointerLocked = isPointerLocked();
+    if (countFocusReset) {
+      state.focusResets++;
+      if (capture) capture.bridge.focusResets++;
+    }
+  };
 
   const addListener = (target, type, handler, listenerOptions) => {
     target.addEventListener(type, handler, listenerOptions);
@@ -369,23 +392,34 @@ function installRawMouse(options = {}) {
   };
 
   const onPointerLockChange = () => {
-    state.pointerLocked = isPointerLocked();
     state.lockChanges++;
-    rawActiveForLock = false;
-    bridgeDisabledForLock = false;
-    pendingRawX = 0;
-    pendingRawY = 0;
-    pendingRawEvents = 0;
-    consecutiveMovementMismatches = 0;
-    lastRawAt = 0;
-    lastNativeAt = 0;
+    resetBridgeState(false);
     if (capture) capture.pointerLockChanges++;
+  };
+
+  const onWindowFocusChange = () => resetBridgeState(true);
+  const onContextMenu = (event) => {
+    // Chromium reports macOS Control+primary-click as button 0 followed by a
+    // contextmenu event. Swallow only that secondary action in a match; the
+    // original primary mousedown/up remain untouched, and a real right click
+    // (button 2) still reaches Kirka normally.
+    if (platform !== "darwin" || !isInMatch()) return;
+    if (!event.ctrlKey || Number(event.button) !== 0) return;
+    state.normalizedControlClicks++;
+    if (capture) capture.bridge.normalizedControlClicks++;
+    if (typeof event.preventDefault === "function") event.preventDefault();
+    if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+    if (typeof event.stopPropagation === "function") event.stopPropagation();
   };
 
   addListener(windowObject, "pointerrawupdate", onRawPointer, true);
   addListener(windowObject, "mousemove", onMouseMove, true);
   addListener(windowObject, "pointermove", onPointerMove, true);
+  addListener(windowObject, "blur", onWindowFocusChange, true);
+  addListener(windowObject, "focus", onWindowFocusChange, true);
+  addListener(documentObject, "visibilitychange", onWindowFocusChange, true);
   addListener(documentObject, "pointerlockchange", onPointerLockChange, true);
+  addListener(documentObject, "contextmenu", onContextMenu, true);
 
   const pointerLockPrototype = windowObject.Element?.prototype;
   if (pointerLockPrototype && typeof pointerLockPrototype.requestPointerLock === "function") {
@@ -459,6 +493,8 @@ function installRawMouse(options = {}) {
         passedNativeMouseMoves: 0,
         movementMatches: 0,
         movementMismatches: 0,
+        focusResets: 0,
+        normalizedControlClicks: 0,
         disabledAfterMismatch: false,
       },
       pointerLockChanges: 0,
@@ -543,6 +579,8 @@ function installRawMouse(options = {}) {
       passedNativeMouseMoves: state.passedNativeMouseMoves,
       movementMatches: state.movementMatches,
       movementMismatches: state.movementMismatches,
+      focusResets: state.focusResets,
+      normalizedControlClicks: state.normalizedControlClicks,
       unadjusted: { ...state.unadjusted },
     };
   };

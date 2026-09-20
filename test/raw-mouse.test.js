@@ -56,6 +56,9 @@ const makeEvent = (properties = {}) => ({
   stopPropagation() {
     this.__propagationStopped = true;
   },
+  preventDefault() {
+    this.defaultPrevented = true;
+  },
   ...properties,
 });
 
@@ -237,6 +240,68 @@ test("falls back to trusted native movement after repeated raw/native mismatches
 
   assert.deepEqual(gameDeltas, [1, 2, 1, 2, 1, 2, 4]);
   assert.equal(gameDeltas.reduce((sum, value) => sum + value, 0), 13);
+  api.destroy();
+});
+
+test("focus and visibility transitions clear pending raw reconciliation", () => {
+  const env = createEnvironment();
+  const api = installRawMouse({
+    windowObject: env.windowObject,
+    documentObject: env.documentObject,
+    settings: { high_rate_mouse: true },
+    now: env.now,
+  });
+  const gameDeltas = [];
+  env.lockElement.addEventListener("mousemove", (event) => gameDeltas.push(event.movementX));
+
+  env.setNow(10);
+  env.emitRaw({ movementX: 5 });
+  env.windowObject.invoke("blur", makeEvent());
+  env.setNow(20);
+  const afterBlur = env.emitNative({ movementX: 2 });
+
+  env.setNow(30);
+  env.emitRaw({ movementX: 4 });
+  env.documentObject.invoke("visibilitychange", makeEvent());
+  env.setNow(40);
+  const afterVisibilityChange = env.emitNative({ movementX: 3 });
+
+  assert.deepEqual(gameDeltas, [5, 2, 4, 3]);
+  assert.equal(afterBlur.__immediateStopped, undefined);
+  assert.equal(afterVisibilityChange.__immediateStopped, undefined);
+  assert.equal(api.getStats().focusResets, 2);
+  api.destroy();
+});
+
+test("macOS Control+primary context action is blocked only in matches while real right click passes", () => {
+  const env = createEnvironment();
+  let inMatch = true;
+  const api = installRawMouse({
+    windowObject: env.windowObject,
+    documentObject: env.documentObject,
+    settings: { high_rate_mouse: true },
+    now: env.now,
+    platform: "darwin",
+    isInMatch: () => inMatch,
+  });
+
+  const controlPrimary = makeEvent({ button: 0, buttons: 1, ctrlKey: true });
+  env.documentObject.invoke("contextmenu", controlPrimary);
+  assert.equal(controlPrimary.defaultPrevented, true);
+  assert.equal(controlPrimary.__immediateStopped, true);
+  assert.equal(api.getStats().normalizedControlClicks, 1);
+
+  const realRightClick = makeEvent({ button: 2, buttons: 2, ctrlKey: false });
+  env.documentObject.invoke("contextmenu", realRightClick);
+  assert.equal(realRightClick.defaultPrevented, undefined);
+  assert.equal(realRightClick.__immediateStopped, undefined);
+
+  inMatch = false;
+  const menuControlClick = makeEvent({ button: 0, buttons: 1, ctrlKey: true });
+  env.documentObject.invoke("contextmenu", menuControlClick);
+  assert.equal(menuControlClick.defaultPrevented, undefined);
+  assert.equal(menuControlClick.__immediateStopped, undefined);
+  assert.equal(api.getStats().normalizedControlClicks, 1);
   api.destroy();
 });
 
