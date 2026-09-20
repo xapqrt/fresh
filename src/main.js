@@ -1,7 +1,7 @@
 // Capture startup before loading Electron integrations and native modules.
 const _mainStartedAt = Date.now();
 
-const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net, screen, powerSaveBlocker } = require("electron");
+const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net, screen } = require("electron");
 const { applySwitches } = require("./util/switches");
 const { default_settings, allowed_urls } = require("./util/defaults.json");
 const path = require("path");
@@ -9,7 +9,6 @@ const os = require("os");
 const Store = require("electron-store");
 const fs = require("fs");
 const { summarizeSeries, round } = require("./util/perf-metrics");
-const { InputStateGuard } = require("./util/input-state-guard");
 
 const _startupMetrics = {};
 const _perf = (label) => {
@@ -121,128 +120,6 @@ const armSyntheticKeyFailsafe = () => {
     return;
   }
   _bhopStaleTimer = setTimeout(releaseSyntheticKeys, 1500);
-};
-
-// ── Focus/input lifecycle ─────────────────────────────────────────────────
-// macOS Space switching often happens while Control is held. The window can
-// receive the key-down and lose focus before Chromium sees key-up; macOS then
-// treats a primary click as Control+click (secondary click). Track every key
-// seen by the game and sanitize held keys/buttons on both sides of a focus
-// transition. The focus pass is the important one because sendInputEvent only
-// reliably targets a focused BrowserWindow.
-const _inputStateGuard = new InputStateGuard();
-let _focusReleaseTimer = null;
-let _gameplayPowerBlockerId = null;
-
-const _sendKeyReleases = (keyCodes) => {
-  if (!gameWindow || gameWindow.isDestroyed() || gameWindow.webContents.isDestroyed()) return;
-  for (const keyCode of keyCodes) {
-    try {
-      gameWindow.webContents.sendInputEvent({ type: "keyUp", keyCode });
-    } catch (error) {}
-  }
-};
-
-const _sendMouseReleases = () => {
-  if (!gameWindow || gameWindow.isDestroyed() || gameWindow.webContents.isDestroyed()) return;
-  let width = 1;
-  let height = 1;
-  try {
-    [width, height] = gameWindow.getContentSize();
-  } catch (error) {}
-  const x = Math.max(0, Math.floor(width / 2));
-  const y = Math.max(0, Math.floor(height / 2));
-  // mouseUp without a matching down is ignored, while a button whose real
-  // release was lost on another Space is returned to a neutral state.
-  for (const button of ["left", "right", "middle"]) {
-    try {
-      gameWindow.webContents.sendInputEvent({
-        type: "mouseUp",
-        x,
-        y,
-        button,
-        clickCount: 1,
-        modifiers: [],
-      });
-    } catch (error) {}
-  }
-};
-
-const _sendFocusState = (payload) => {
-  try {
-    if (gameWindow && !gameWindow.isDestroyed() && !gameWindow.webContents.isDestroyed()) {
-      gameWindow.webContents.send("dawn-focus-reset", payload);
-    }
-  } catch (error) {}
-};
-
-const _onGameBlur = () => {
-  clearTimeout(_focusReleaseTimer);
-  _focusReleaseTimer = null;
-  const state = _inputStateGuard.blur();
-  releaseSyntheticKeys();
-  // Best effort while AppKit is resigning the key window; the same releases
-  // are repeated after focus, when Electron guarantees delivery.
-  _sendKeyReleases(state.releaseKeys);
-  _sendFocusState({ phase: "blur", sequence: state.sequence });
-};
-
-const _onGameFocus = () => {
-  try {
-    gameWindow?.webContents.setBackgroundThrottling(false);
-  } catch (error) {}
-
-  const state = _inputStateGuard.focus();
-  if (!state.hadBlur) return;
-  const inMatch = Boolean(gameWindow && !gameWindow.isDestroyed() && _navIsMatch(gameWindow.webContents.getURL()));
-  const release = () => {
-    releaseSyntheticKeys();
-    _sendKeyReleases(state.releaseKeys);
-    if (inMatch) _sendMouseReleases();
-  };
-
-  // Run synchronously before the click that re-activates the window can reach
-  // the page, then repeat after one display interval to cover AppKit's focus
-  // hand-off ordering.
-  release();
-  _focusReleaseTimer = setTimeout(() => {
-    _focusReleaseTimer = null;
-    release();
-  }, 16);
-  _sendFocusState({
-    phase: "focus",
-    sequence: state.sequence,
-    awayMs: state.awayMs,
-    releasedKeys: state.releaseKeys.length,
-    releasedMouseButtons: inMatch ? 3 : 0,
-  });
-};
-
-const _stopGameplayPowerBlocker = () => {
-  if (_gameplayPowerBlockerId === null) return;
-  try {
-    if (powerSaveBlocker.isStarted(_gameplayPowerBlockerId)) {
-      powerSaveBlocker.stop(_gameplayPowerBlockerId);
-    }
-  } catch (error) {}
-  _gameplayPowerBlockerId = null;
-};
-
-const _syncGameplayPowerBlocker = (url) => {
-  const inMatch = _navIsMatch(url);
-  if (!inMatch) {
-    _stopGameplayPowerBlocker();
-    return;
-  }
-  try {
-    if (_gameplayPowerBlockerId === null || !powerSaveBlocker.isStarted(_gameplayPowerBlockerId)) {
-      _gameplayPowerBlockerId = powerSaveBlocker.start("prevent-app-suspension");
-      console.log(`[power] gameplay suspension blocker started (${_gameplayPowerBlockerId})`);
-    }
-  } catch (error) {
-    console.warn("[power] could not start gameplay suspension blocker:", error.message);
-    _gameplayPowerBlockerId = null;
-  }
 };
 
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
@@ -1038,11 +915,6 @@ const createWindow = () => {
     backgroundColor: "#141414",
   });
   _perf("game window created");
-  // Reinforce the webPreference at the live WebContents level. This keeps
-  // timers/rAF active while another macOS Space owns the display.
-  try {
-    gameWindow.webContents.setBackgroundThrottling(false);
-  } catch (error) {}
 
   gameWindow.webContents.once("dom-ready", () => _perf("game dom ready"));
   gameWindow.once("ready-to-show", () => {
@@ -1144,15 +1016,9 @@ const createWindow = () => {
     releaseSyntheticKeys();
   });
 
-  gameWindow.webContents.on("did-navigate", (_event, url) => {
-    _syncGameplayPowerBlocker(url);
-    _navPreviousUrl = url;
-  });
-
   gameWindow.webContents.on("did-navigate-in-page", (e, url) => {
     const wasInMatch = _navIsMatch(_navPreviousUrl);
     const nowInMatch = _navIsMatch(url);
-    _syncGameplayPowerBlocker(url);
     if (wasInMatch && !nowInMatch) {
       matchEnded();
     }
@@ -1208,10 +1074,6 @@ const createWindow = () => {
     if (_activePerformanceBenchmark) {
       _failPerformanceBenchmark(_activePerformanceBenchmark, "Benchmark stopped because the game window closed.");
     }
-    clearTimeout(_focusReleaseTimer);
-    _focusReleaseTimer = null;
-    _inputStateGuard.reset();
-    _stopGameplayPowerBlocker();
     releaseSyntheticKeys();
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
@@ -1219,12 +1081,12 @@ const createWindow = () => {
     gameWindow = null;
   });
 
-  gameWindow.on("blur", _onGameBlur);
-  gameWindow.on("focus", _onGameFocus);
+  gameWindow.on("blur", () => {
+    releaseSyntheticKeys();
+  });
 
   gameWindow.webContents.on('before-input-event', (event, input) => {
-    _inputStateGuard.record(input);
-    if (input.type === 'keyDown' && !input.isAutoRepeat) {
+    if (input.type === 'keyDown' && !input.repeat) {
       const bind = settings.menu_keybind || 'ShiftRight';
       if (matchesKeybindMain(input, bind)) {
         event.preventDefault();
@@ -1455,14 +1317,6 @@ const _finishPerformanceBenchmark = async (benchmark) => {
   }
 
   const completedAt = new Date();
-  let gameplaySuspensionBlocked = false;
-  let backgroundThrottling = null;
-  try {
-    gameplaySuspensionBlocked = _gameplayPowerBlockerId !== null && powerSaveBlocker.isStarted(_gameplayPowerBlockerId);
-  } catch (error) {}
-  try {
-    backgroundThrottling = benchmark.webContents.getBackgroundThrottling();
-  } catch (error) {}
   const report = {
     schemaVersion: 2,
     generatedAt: completedAt.toISOString(),
@@ -1498,8 +1352,6 @@ const _finishPerformanceBenchmark = async (benchmark) => {
       memoryUnit: "MiB (Electron KiB values converted by /1024)",
       debugTelemetryEnabled: Boolean(process.env.DAWN_DEBUG),
       appMetricGuardsPausedDuringCapture: true,
-      gameplaySuspensionBlocked,
-      backgroundThrottling,
       routeStart: benchmark.routeStart,
       routeEnd: benchmark.webContents.isDestroyed() ? "renderer-destroyed" : benchmark.webContents.getURL(),
       processSamples: benchmark.samples.length,
@@ -1886,10 +1738,6 @@ app.on("child-process-gone", (_, details) => {
 });
 
 app.on("before-quit", () => {
-  clearTimeout(_focusReleaseTimer);
-  _focusReleaseTimer = null;
-  _stopGameplayPowerBlocker();
-  _inputStateGuard.reset();
   releaseSyntheticKeys();
   globalShortcut.unregisterAll();
   // Flush any debounced settings write so the last change isn't lost.

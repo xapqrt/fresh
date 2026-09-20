@@ -130,7 +130,6 @@ const unsupportedApi = (reason) => ({
   startCapture: () => false,
   finishCapture: () => null,
   sampleFrame: () => {},
-  reset: () => {},
   getStats: () => ({ supported: false, reason }),
   destroy: () => {},
 });
@@ -191,7 +190,6 @@ function installRawMouse(options = {}) {
     movementMatches: 0,
     movementMismatches: 0,
     lockChanges: 0,
-    focusResets: 0,
     unadjusted: {
       attempts: 0,
       accepted: 0,
@@ -205,22 +203,6 @@ function installRawMouse(options = {}) {
   const unadjustedEnabled = () => boolSetting(settings, "raw_mouse_input", false);
   const isPointerLocked = () => Boolean(documentObject.pointerLockElement);
   const isMoving = (event) => (Number(event?.movementX) || 0) !== 0 || (Number(event?.movementY) || 0) !== 0;
-
-  const resetTransientState = (countAsFocusReset = true) => {
-    rawActiveForLock = false;
-    bridgeDisabledForLock = false;
-    pendingRawX = 0;
-    pendingRawY = 0;
-    pendingRawEvents = 0;
-    consecutiveMovementMismatches = 0;
-    lastRawAt = 0;
-    lastNativeAt = 0;
-    state.pointerLocked = isPointerLocked();
-    if (countAsFocusReset) {
-      state.focusResets++;
-      if (capture) capture.bridge.focusResets++;
-    }
-  };
 
   const addListener = (target, type, handler, listenerOptions) => {
     target.addEventListener(type, handler, listenerOptions);
@@ -387,8 +369,16 @@ function installRawMouse(options = {}) {
   };
 
   const onPointerLockChange = () => {
+    state.pointerLocked = isPointerLocked();
     state.lockChanges++;
-    resetTransientState(false);
+    rawActiveForLock = false;
+    bridgeDisabledForLock = false;
+    pendingRawX = 0;
+    pendingRawY = 0;
+    pendingRawEvents = 0;
+    consecutiveMovementMismatches = 0;
+    lastRawAt = 0;
+    lastNativeAt = 0;
     if (capture) capture.pointerLockChanges++;
   };
 
@@ -469,7 +459,6 @@ function installRawMouse(options = {}) {
         passedNativeMouseMoves: 0,
         movementMatches: 0,
         movementMismatches: 0,
-        focusResets: 0,
         disabledAfterMismatch: false,
       },
       pointerLockChanges: 0,
@@ -554,7 +543,6 @@ function installRawMouse(options = {}) {
       passedNativeMouseMoves: state.passedNativeMouseMoves,
       movementMatches: state.movementMatches,
       movementMismatches: state.movementMismatches,
-      focusResets: state.focusResets,
       unadjusted: { ...state.unadjusted },
     };
   };
@@ -570,15 +558,7 @@ function installRawMouse(options = {}) {
     capture = null;
   };
 
-  return {
-    supported: true,
-    startCapture,
-    finishCapture,
-    sampleFrame,
-    reset: () => resetTransientState(true),
-    getStats,
-    destroy,
-  };
+  return { supported: true, startCapture, finishCapture, sampleFrame, getStats, destroy };
 }
 
 module.exports = {

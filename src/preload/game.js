@@ -34,7 +34,6 @@ sanitizeBlockRgbSettings();
 
 const { summarizeFrameTimes } = require("../util/perf-metrics");
 const { installRawMouse } = require("./game/raw-mouse");
-const { installFocusRecovery } = require("./game/focus-recovery");
 
 // Frame telemetry is demand-driven. The old sampler ran a second rAF loop for
 // the entire lifetime of the client and shifted an Array every frame, even
@@ -150,7 +149,6 @@ const _startBenchmarkCapture = (options = {}) => {
     longestTaskMs: 0,
     heapStartMb,
     mouseCaptureStarted,
-    focusRecoveryStart: window.__dawnFocusRecovery ? { ...window.__dawnFocusRecovery } : null,
   };
 
   if (typeof PerformanceObserver !== "undefined") {
@@ -193,17 +191,6 @@ const _finishBenchmarkCapture = () => {
   const mouseInput = capture.mouseCaptureStarted
     ? window.__dawnMouseInput?.finishCapture() ?? null
     : null;
-  const focusRecovery = window.__dawnFocusRecovery
-    ? { ...window.__dawnFocusRecovery }
-    : null;
-  if (focusRecovery && capture.focusRecoveryStart) {
-    focusRecovery.duringCapture = {
-      blurCount: Math.max(0, focusRecovery.blurCount - capture.focusRecoveryStart.blurCount),
-      focusCount: Math.max(0, focusRecovery.focusCount - capture.focusRecoveryStart.focusCount),
-      resetCount: Math.max(0, focusRecovery.resetCount - capture.focusRecoveryStart.resetCount),
-      contextMenusNormalized: Math.max(0, focusRecovery.contextMenusNormalized - capture.focusRecoveryStart.contextMenusNormalized),
-    };
-  }
 
   return {
     elapsedSeconds: +((performance.now() - capture.startedAt) / 1000).toFixed(2),
@@ -231,7 +218,6 @@ const _finishBenchmarkCapture = () => {
       endMb: heapEndMb === null ? null : +heapEndMb.toFixed(2),
     },
     mouseInput,
-    focusRecovery,
     visibilityState: document.visibilityState,
   };
 };
@@ -363,20 +349,6 @@ try {
   window.__dawnMouseInput = installRawMouse({ windowObject: window, documentObject: document, settings });
 } catch (error) {
   console.warn("[dawn-input] high-rate mouse install failed; using native input", error);
-}
-
-try {
-  window.__dawnFocusRecoveryController = installFocusRecovery({
-    windowObject: window,
-    documentObject: document,
-    ipc: ipcRenderer,
-    mouseInput: window.__dawnMouseInput,
-    platform: process.platform,
-    isInMatch: () => window.location.pathname.startsWith("/games") || window.location.pathname.startsWith("/hub/ranked"),
-    resetTelemetryClock: (timestamp) => { _telemetryLastT = timestamp; },
-  });
-} catch (error) {
-  console.warn("[dawn-input] focus recovery install failed", error);
 }
 
   // Boot-time value for the patched game loop (logic tick overclock).

@@ -240,30 +240,6 @@ test("falls back to trusted native movement after repeated raw/native mismatches
   api.destroy();
 });
 
-test("focus reset clears a pending raw/native reconciliation queue", () => {
-  const env = createEnvironment();
-  const api = installRawMouse({
-    windowObject: env.windowObject,
-    documentObject: env.documentObject,
-    settings: { high_rate_mouse: true },
-    now: env.now,
-  });
-  const gameDeltas = [];
-  env.lockElement.addEventListener("mousemove", (event) => gameDeltas.push(event.movementX));
-
-  env.setNow(10);
-  env.emitRaw({ movementX: 5 });
-  api.reset();
-  env.setNow(20);
-  const native = env.emitNative({ movementX: 2 });
-
-  assert.deepEqual(gameDeltas, [5, 2]);
-  assert.equal(native.__immediateStopped, undefined);
-  assert.equal(api.getStats().suppressedMouseMoves, 0);
-  assert.equal(api.getStats().focusResets, 1);
-  api.destroy();
-});
-
 test("requests unadjusted pointer lock and falls back only when unsupported", async () => {
   const unsupported = Object.assign(new Error("unsupported"), { name: "NotSupportedError" });
   const env = createEnvironment({
