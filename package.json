@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build": "npx electron-builder --mac --arm64",
-    "build:wasm": "bash scripts/build-wasm.sh"
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [],
   "author": "zVipexx",

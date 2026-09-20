@@ -2082,6 +2082,7 @@ class Menu {
       const rendererCpu = processes?.cpuPercent?.renderer;
       const gpuCpu = processes?.cpuPercent?.gpu;
       const longTasks = report.renderer?.longTasks;
+      const mouse = report.renderer?.mouseInput;
       const lines = [];
 
       if (frames?.ready) {
@@ -2092,6 +2093,12 @@ class Menu {
         lines.push(`Slow / >50ms     ${frames.slowFrames} / ${frames.framesOver50Ms}`);
       } else {
         lines.push("Frame summary unavailable");
+      }
+      if (mouse) {
+        lines.push(`Mouse raw/native ${mouse.rawPointerUpdate?.estimatedActiveHz ?? 0} / ${mouse.nativeMouseMove?.estimatedActiveHz ?? 0} Hz`);
+        lines.push(`Mouse bridge     ${mouse.bridge?.syntheticMouseMoves ?? 0} sent, ${mouse.bridge?.suppressedNativeMouseMoves ?? 0} dupes blocked`);
+        lines.push(`Mouse validation ${mouse.bridge?.movementMatches ?? 0} matched, ${mouse.bridge?.movementMismatches ?? 0} corrected`);
+        lines.push(`Input age p50/95 ${mouse.inputAgeAtFrameMs?.p50 ?? 0}ms / ${mouse.inputAgeAtFrameMs?.p95 ?? 0}ms`);
       }
       lines.push("");
       lines.push(`CPU avg total    ${totalCpu?.avg ?? 0}%`);

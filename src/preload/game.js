@@ -33,6 +33,7 @@ function sanitizeBlockRgbSettings() {
 sanitizeBlockRgbSettings();
 
 const { summarizeFrameTimes } = require("../util/perf-metrics");
+const { installRawMouse } = require("./game/raw-mouse");
 
 // Frame telemetry is demand-driven. The old sampler ran a second rAF loop for
 // the entire lifetime of the client and shifted an Array every frame, even
@@ -90,6 +91,7 @@ function _telemetryLoop(timestamp) {
       } else {
         _benchmarkCapture.overflowSamples++;
       }
+      window.__dawnMouseInput?.sampleFrame(timestamp);
     } else {
       _benchmarkCapture.discardedSamples++;
     }
@@ -131,6 +133,10 @@ const _startBenchmarkCapture = (options = {}) => {
   // Preallocate to avoid Array growth/GC becoming benchmark noise. The 2x
   // margin also covers a cap lower than the actual compositor cadence.
   const frameCapacity = Math.min(120000, Math.max(4096, Math.ceil(targetFps * durationSeconds * 2)));
+  // Mouse capture preallocates its fixed sample buffers. Start it before the
+  // heap baseline so benchmark instrumentation cannot look like a leak.
+  const mouseCaptureStarted = window.__dawnMouseInput?.startCapture() === true;
+  const heapStartMb = performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null;
   _benchmarkCapture = {
     startedAt: performance.now(),
     targetFps,
@@ -141,7 +147,8 @@ const _startBenchmarkCapture = (options = {}) => {
     longTaskCount: 0,
     longTaskTotalMs: 0,
     longestTaskMs: 0,
-    heapStartMb: performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null,
+    heapStartMb,
+    mouseCaptureStarted,
   };
 
   if (typeof PerformanceObserver !== "undefined") {
@@ -178,6 +185,12 @@ const _finishBenchmarkCapture = () => {
   const paints = Object.fromEntries(
     performance.getEntriesByType("paint").map((entry) => [entry.name, +entry.startTime.toFixed(2)]),
   );
+  // Read the heap endpoint before sorting mouse interval samples for the
+  // report; report-generation allocations are not game memory growth.
+  const heapEndMb = performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null;
+  const mouseInput = capture.mouseCaptureStarted
+    ? window.__dawnMouseInput?.finishCapture() ?? null
+    : null;
 
   return {
     elapsedSeconds: +((performance.now() - capture.startedAt) / 1000).toFixed(2),
@@ -202,8 +215,9 @@ const _finishBenchmarkCapture = () => {
     },
     jsHeap: {
       startMb: capture.heapStartMb === null ? null : +capture.heapStartMb.toFixed(2),
-      endMb: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(2) : null,
+      endMb: heapEndMb === null ? null : +heapEndMb.toFixed(2),
     },
+    mouseInput,
     visibilityState: document.visibilityState,
   };
 };
@@ -287,6 +301,12 @@ function toggleFrameTimeLogger() {
     if (Number.isFinite(snapshots)) {
       lines.push(`Interp ${snapshots} snapshots  (~${snapshots * 33}ms, target ${targetMs}ms)`);
     }
+    const mouse = window.__dawnMouseInput?.getStats();
+    if (mouse?.pointerLocked) {
+      const bridge = !mouse.supported ? "unsupported" : mouse.bridgeActive ? "active" : mouse.highRateEnabled ? "armed" : "off";
+      lines.push(`Mouse raw ${mouse.rawHz || 0}Hz  native ${mouse.nativeMouseHz || 0}Hz  bridge ${bridge}`);
+      lines.push(`Mouse acceleration ${mouse.unadjustedEnabled ? mouse.unadjusted.status : "OS-adjusted"}`);
+    }
     _frameTimeOverlay.textContent = lines.join("\n");
   };
   sample();
@@ -320,6 +340,17 @@ const settings = ipcRenderer.sendSync("get-settings");
 // object on every change. Reading from it avoids a blocking sendSync
 // round-trip on every call (several pollers paid one per second).
 ipcRenderer.on("settings-updated", (s) => { if (s) Object.assign(settings, s); });
+
+// Install before the page bundle executes so its mousemove listener receives
+// device-rate pointer deltas. Both modes read the live settings object: the
+// high-rate bridge changes immediately, while unadjusted pointer lock takes
+// effect the next time the game acquires pointer lock.
+try {
+  window.__dawnMouseInput = installRawMouse({ windowObject: window, documentObject: document, settings });
+} catch (error) {
+  console.warn("[dawn-input] high-rate mouse install failed; using native input", error);
+}
+
   // Boot-time value for the patched game loop (logic tick overclock).
   window.__dawnTickMul = Math.max(1, Number(settings.logic_tick_rate) / 60) || 1;
   // Boot-time value for interpolation delay slider (ms).

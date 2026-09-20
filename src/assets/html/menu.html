@@ -900,6 +900,29 @@
         </div>
       </div>
       <div class="option-group wide">
+        <div class="group-title">Mouse Latency</div>
+        <div class="option">
+          <div class="left">
+            <span>High-Rate Aim Input</span>
+            <span class="description">Feeds Kirka the earliest device-rate pointer samples instead of relying only on normal mousemove batches. Keeps total movement unchanged and works independently of the 60Hz display.</span>
+          </div>
+          <div class="switch">
+            <input type="checkbox" id="high_rate_mouse" data-setting="high_rate_mouse" />
+            <label for="high_rate_mouse"></label>
+          </div>
+        </div>
+        <div class="option">
+          <div class="left">
+            <span>Unadjusted Mouse</span>
+            <span class="description">Requests raw pointer lock without the macOS acceleration curve, like an aim trainer. Re-click into the match after changing it; sensitivity can feel different.</span>
+          </div>
+          <div class="switch">
+            <input type="checkbox" id="raw_mouse_input" data-setting="raw_mouse_input" />
+            <label for="raw_mouse_input"></label>
+          </div>
+        </div>
+      </div>
+      <div class="option-group wide">
 <div class="group-title">Smart Modes</div>
         <div class="option requires-restart">
           <span>Auto Fullscreen</span>
@@ -924,7 +947,7 @@
         <div class="option">
           <div class="left">
             <span>30-second capture</span>
-            <span class="description">3s warm-up, then measures frame-time p95/p99, 1% lows, long tasks, CPU, renderer/GPU memory, and startup timings. Run the same map and settings when comparing.</span>
+            <span class="description">3s warm-up, then measures frame pacing, CPU/memory, startup timings, raw/native mouse event rates, and input age at render. Keep aiming normally during the capture.</span>
           </div>
           <button type="button" class="juice-button benchmark-run" id="run-performance-benchmark">Run Benchmark</button>
         </div>

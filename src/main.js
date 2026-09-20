@@ -1318,7 +1318,7 @@ const _finishPerformanceBenchmark = async (benchmark) => {
 
   const completedAt = new Date();
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: completedAt.toISOString(),
     app: {
       version: app.getVersion(),
@@ -1339,6 +1339,8 @@ const _finishPerformanceBenchmark = async (benchmark) => {
       engineProfile: settings.engine_profile,
       fpsCap: Number(settings.fps_cap) || 0,
       logicTickRate: Number(settings.logic_tick_rate) || 60,
+      highRateMouse: settings.high_rate_mouse !== false,
+      unadjustedMouse: settings.raw_mouse_input === true,
       interpolationDelayMs: Number(settings.interp_delay_ms) || 75,
       thermalGuard: settings.thermal_guard !== false,
       highRefreshAuto: settings.high_refresh_auto !== false,

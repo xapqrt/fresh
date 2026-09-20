@@ -44,7 +44,7 @@ Same two flags on Electron 32 (Chromium 128) + ANGLE Metal:
 So: the flags are fine on Chromium 85, fatal on 128. The break is inside
 Chromium's macOS compositor/presentation path, **somewhere between Chrome 85 and 128**.
 
-## 3. The two independent paths
+## 3. Independent paths
 
 ### Path A — Logic Tick Rate (SHIPPED, compositor-independent)
 
@@ -66,6 +66,29 @@ by the display link, so overclocking it cannot touch macOS presentation:
 3. F9 logger + feel: bhop consistency and aim should tighten; CPU should rise but stay
    sane (< ~60% one-core). Visual smoothness must be unchanged (it's compositor-driven).
 4. Battery/thermals over a longer session.
+
+### Path A2 — Device-rate aim input (SHIPPED, presentation-safe)
+
+A fast game loop cannot consume mouse samples that never reach it. Chromium may align
+or coalesce ordinary pointer movement with rendering, so the client now listens for
+`pointerrawupdate` while pointer-locked and mirrors each early delta into Kirka's existing
+`mousemove` input path:
+
+- **High-Rate Aim Input** is on by default and is live-toggleable.
+- The later compatibility `mousemove` carrying the same aggregate is suppressed exactly
+  once, preventing doubled sensitivity.
+- Raw/native movement totals are compared continuously. Differences are corrected, and
+  three consecutive mismatches disable the bridge for that pointer lock so native input
+  always remains the safe fallback.
+- **Unadjusted Mouse** is a separate opt-in. It requests
+  `requestPointerLock({ unadjustedMovement: true })` to bypass the macOS acceleration
+  curve, then retries plain pointer lock if Chromium reports it unsupported.
+- F9 shows raw/native event rates. The repeatable benchmark records both streams, bridge
+  validation, and event-to-render input age under `renderer.mouseInput`.
+
+This improves input freshness and consistency but does not create more than 60 visible
+updates on the built-in panel. It deliberately leaves the verified stock compositor path
+untouched.
 
 ### Path B — Engine Profile A/B (the uncap flags, done right)
 
@@ -120,12 +143,15 @@ latency and audio routing. Weeks of work — do not start before A/B/C are exhau
 
 ## 4. Decision tree
 
-1. **Test A today.** If tick 480 feels like the old client at sane CPU → ship that as
-   default-off and stop; the compositor is never touched and nothing can regress it.
-2. Run Path B profiles (an evening). If any wins → ship it as an opt-in profile.
-3. Bisect (Path C) over a day or two of spare time → the cleanest "true uncapped
+1. **Test A + A2 first.** Use tick 480 with High-Rate Aim Input, then run the benchmark
+   while aiming normally. Raw Hz should exceed native mousemove Hz, movement mismatches
+   should stay at zero, and presentation should remain ~60 clean rAF FPS.
+2. A/B **Unadjusted Mouse** separately; keep the mode that feels consistent after matching
+   in-game sensitivity. It changes acceleration, not display refresh.
+3. Run Path B profiles (an evening). If any wins → ship it as an opt-in profile.
+4. Bisect (Path C) over a day or two of spare time → the cleanest "true uncapped
    rAF" native client ever made for this game.
-4. A + C can combine: native-Electron-<N> with uncap profile + tick 240 = old feel
+5. A + C can combine: native-Electron-<N> with uncap profile + tick 240 = old feel
    plus finer bhop timing.
 
 ## 5. What is deliberately NOT done
