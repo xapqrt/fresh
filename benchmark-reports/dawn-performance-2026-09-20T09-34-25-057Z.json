@@ -1,0 +1,807 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-20T09:34:25.057Z",
+  "app": {
+    "version": "1.1.8",
+    "electron": "32.2.0",
+    "chrome": "128.0.6613.178",
+    "node": "20.18.0",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "system": {
+    "cpu": "Apple M4",
+    "logicalCores": 10,
+    "totalMemoryGb": 16,
+    "displayRefreshHz": 60,
+    "targetFps": 60
+  },
+  "settings": {
+    "engineProfile": "stock",
+    "fpsCap": 240,
+    "logicTickRate": 480,
+    "highRateMouse": true,
+    "unadjustedMouse": false,
+    "interpolationDelayMs": 100,
+    "thermalGuard": true,
+    "highRefreshAuto": true
+  },
+  "run": {
+    "warmupSeconds": 3,
+    "captureSeconds": 30,
+    "processSampleIntervalSeconds": 1,
+    "memoryUnit": "MiB (Electron KiB values converted by /1024)",
+    "debugTelemetryEnabled": false,
+    "appMetricGuardsPausedDuringCapture": true,
+    "routeStart": "https://kirka.io/games/INDIA~yK9xgpr0w",
+    "routeEnd": "https://kirka.io/games/INDIA~yK9xgpr0w",
+    "processSamples": 30,
+    "sampleErrors": []
+  },
+  "startupMs": {
+    "main module initialized": 60,
+    "app ready": 123,
+    "initGame": 123,
+    "splash window created": 156,
+    "game window created": 166,
+    "game load started": 167,
+    "splash ready to show": 283,
+    "game ready to show": 857,
+    "game dom ready": 1031,
+    "bundle warm complete": 1789,
+    "game did-finish-load": 2001
+  },
+  "renderer": {
+    "elapsedSeconds": 30.02,
+    "frames": {
+      "ready": true,
+      "samples": 1799,
+      "durationSeconds": 30.06,
+      "targetFps": 60,
+      "expectedFrameTimeMs": 16.67,
+      "avgFps": 59.8,
+      "onePercentLowFps": 45.7,
+      "pointOnePercentLowFps": 17.9,
+      "avgFrameTimeMs": 16.71,
+      "minFrameTimeMs": 15.6,
+      "maxFrameTimeMs": 78.2,
+      "p50FrameTimeMs": 16.7,
+      "p95FrameTimeMs": 17.6,
+      "p99FrameTimeMs": 17.6,
+      "jitterMs": 1.57,
+      "slowFrameThresholdMs": 25,
+      "slowFrames": 2,
+      "slowFramePercent": 0.11,
+      "hitchThresholdMs": 50,
+      "hitches": 1,
+      "framesOver20Ms": 2,
+      "framesOver33Ms": 2,
+      "framesOver50Ms": 1,
+      "framesOver100Ms": 0
+    },
+    "frameBufferCapacity": 4096,
+    "overflowSamples": 0,
+    "navigationMs": {
+      "responseEnd": 516.2,
+      "domInteractive": 623.1,
+      "domContentLoaded": 795,
+      "loadEvent": 1766.2,
+      "firstPaint": 865.1,
+      "firstContentfulPaint": 865.1
+    },
+    "discardedSamples": 0,
+    "longTasks": {
+      "count": 0,
+      "totalMs": 0,
+      "longestMs": 0
+    },
+    "jsHeap": {
+      "startMb": 55.46,
+      "endMb": 55.66
+    },
+    "mouseInput": {
+      "durationSeconds": 30.01,
+      "support": {
+        "pointerRawUpdate": true,
+        "coalescedEvents": true,
+        "pointerLockOptions": true
+      },
+      "settings": {
+        "highRateMouse": true,
+        "unadjustedMovement": false
+      },
+      "pointerLock": {
+        "lockedAtFinish": true,
+        "changes": 2,
+        "renderedFramesLocked": 1431
+      },
+      "rawPointerUpdate": {
+        "events": 10162,
+        "movingEvents": 10162,
+        "coalescedSamples": 10845,
+        "estimatedActiveHz": 1000,
+        "intervalMs": {
+          "samples": 10074,
+          "first": 0.6,
+          "last": 3.4,
+          "delta": 2.8,
+          "min": 0.1,
+          "max": 100,
+          "avg": 1.836,
+          "p50": 1,
+          "p95": 5,
+          "p99": 12.6
+        },
+        "eventAgeMs": {
+          "samples": 10162,
+          "first": 0.7,
+          "last": 0.6,
+          "delta": -0.1,
+          "min": 0,
+          "max": 7.7,
+          "avg": 0.413,
+          "p50": 0.3,
+          "p95": 1.2,
+          "p99": 2.5
+        },
+        "movement": {
+          "x": -8341,
+          "y": -253,
+          "absolute": 53418
+        },
+        "overflowSamples": 0
+      },
+      "pointerMove": {
+        "events": 1453,
+        "movingEvents": 1437,
+        "coalescedSamples": 10854,
+        "estimatedActiveHz": 66,
+        "intervalMs": {
+          "samples": 1410,
+          "first": 15.1,
+          "last": 16.7,
+          "delta": 1.6,
+          "min": 0.1,
+          "max": 99,
+          "avg": 12.948,
+          "p50": 15.1,
+          "p95": 17.6,
+          "p99": 50.1
+        },
+        "eventAgeMs": {
+          "samples": 1437,
+          "first": 0.7,
+          "last": 1.2,
+          "delta": 0.5,
+          "min": 0.2,
+          "max": 19.4,
+          "avg": 2.497,
+          "p50": 1.4,
+          "p95": 8.5,
+          "p99": 13.3
+        },
+        "movement": {
+          "x": -8349,
+          "y": -251,
+          "absolute": 53292
+        },
+        "overflowSamples": 0
+      },
+      "nativeMouseMove": {
+        "events": 1437,
+        "movingEvents": 1437,
+        "coalescedSamples": 0,
+        "estimatedActiveHz": 66,
+        "intervalMs": {
+          "samples": 1410,
+          "first": 15.1,
+          "last": 16.7,
+          "delta": 1.6,
+          "min": 0.1,
+          "max": 99,
+          "avg": 12.948,
+          "p50": 15.1,
+          "p95": 17.6,
+          "p99": 50.1
+        },
+        "eventAgeMs": {
+          "samples": 1437,
+          "first": 0.7,
+          "last": 1.2,
+          "delta": 0.5,
+          "min": 0.2,
+          "max": 19.4,
+          "avg": 2.506,
+          "p50": 1.5,
+          "p95": 8.5,
+          "p99": 13.3
+        },
+        "movement": {
+          "x": -8349,
+          "y": -251,
+          "absolute": 53292
+        },
+        "overflowSamples": 0
+      },
+      "bridge": {
+        "syntheticMouseMoves": 10235,
+        "correctionMouseMoves": 73,
+        "suppressedNativeMouseMoves": 1434,
+        "passedNativeMouseMoves": 3,
+        "movementMatches": 1361,
+        "movementMismatches": 73,
+        "disabledAfterMismatch": false
+      },
+      "inputAgeAtFrameMs": {
+        "samples": 1387,
+        "first": 2.3,
+        "last": 1.9,
+        "delta": -0.4,
+        "min": 0.9,
+        "max": 249.5,
+        "avg": 26.634,
+        "p50": 2.9,
+        "p95": 161.6,
+        "p99": 224.8
+      },
+      "inputAgeSourceFrames": {
+        "raw": 1387,
+        "native": 0
+      },
+      "overflowSamples": 0,
+      "unadjustedMovement": {
+        "attempts": 0,
+        "accepted": 0,
+        "fallbacks": 0,
+        "status": "not-requested",
+        "lastError": null
+      }
+    },
+    "visibilityState": "visible"
+  },
+  "processes": {
+    "cpuPercent": {
+      "total": {
+        "samples": 30,
+        "first": 5.87,
+        "last": 4.99,
+        "delta": -0.88,
+        "min": 4.99,
+        "max": 9.21,
+        "avg": 6.36,
+        "p50": 6.25,
+        "p95": 8.89,
+        "p99": 9.21
+      },
+      "main": {
+        "samples": 30,
+        "first": 1.32,
+        "last": 0.87,
+        "delta": -0.45,
+        "min": 0.07,
+        "max": 1.83,
+        "avg": 1.27,
+        "p50": 1.39,
+        "p95": 1.71,
+        "p99": 1.83
+      },
+      "renderer": {
+        "samples": 30,
+        "first": 3.13,
+        "last": 2.71,
+        "delta": -0.42,
+        "min": 2.37,
+        "max": 6.25,
+        "avg": 3.45,
+        "p50": 3.16,
+        "p95": 6.05,
+        "p99": 6.25
+      },
+      "gpu": {
+        "samples": 30,
+        "first": 1.16,
+        "last": 1.15,
+        "delta": -0.01,
+        "min": 0.88,
+        "max": 2.91,
+        "avg": 1.38,
+        "p50": 1.16,
+        "p95": 2.69,
+        "p99": 2.91
+      }
+    },
+    "memoryMb": {
+      "main": {
+        "samples": 30,
+        "first": 214.3,
+        "last": 214.64,
+        "delta": 0.34,
+        "min": 214.3,
+        "max": 214.64,
+        "avg": 214.58,
+        "p50": 214.59,
+        "p95": 214.63,
+        "p99": 214.64
+      },
+      "renderer": {
+        "samples": 30,
+        "first": 366.05,
+        "last": 355.08,
+        "delta": -10.97,
+        "min": 355.08,
+        "max": 372.3,
+        "avg": 367.84,
+        "p50": 367.69,
+        "p95": 372.27,
+        "p99": 372.3
+      },
+      "gpu": {
+        "samples": 30,
+        "first": 140.23,
+        "last": 143.41,
+        "delta": 3.18,
+        "min": 140.22,
+        "max": 144.45,
+        "avg": 142.71,
+        "p50": 143.2,
+        "p95": 143.59,
+        "p99": 144.45
+      }
+    },
+    "inMatchSamples": 30,
+    "lobbySamples": 0
+  },
+  "samples": [
+    {
+      "elapsedSeconds": 1,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.87,
+        "main": 1.32,
+        "renderer": 3.13,
+        "gpu": 1.16
+      },
+      "memoryMb": {
+        "main": 214.3,
+        "renderer": 366.05,
+        "gpu": 140.23
+      }
+    },
+    {
+      "elapsedSeconds": 2.01,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.4,
+        "main": 1.47,
+        "renderer": 3.65,
+        "gpu": 1.01
+      },
+      "memoryMb": {
+        "main": 214.38,
+        "renderer": 366.64,
+        "gpu": 140.23
+      }
+    },
+    {
+      "elapsedSeconds": 3.01,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.92,
+        "main": 1.18,
+        "renderer": 3.16,
+        "gpu": 1.3
+      },
+      "memoryMb": {
+        "main": 214.38,
+        "renderer": 366.69,
+        "gpu": 140.23
+      }
+    },
+    {
+      "elapsedSeconds": 4.01,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.29,
+        "main": 1.06,
+        "renderer": 3.52,
+        "gpu": 1.44
+      },
+      "memoryMb": {
+        "main": 214.55,
+        "renderer": 366.73,
+        "gpu": 140.3
+      }
+    },
+    {
+      "elapsedSeconds": 5.01,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.43,
+        "main": 1.53,
+        "renderer": 3.42,
+        "gpu": 1.22
+      },
+      "memoryMb": {
+        "main": 214.58,
+        "renderer": 366.8,
+        "gpu": 140.27
+      }
+    },
+    {
+      "elapsedSeconds": 6.02,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.52,
+        "main": 0.07,
+        "renderer": 4.13,
+        "gpu": 1.97
+      },
+      "memoryMb": {
+        "main": 214.58,
+        "renderer": 366.92,
+        "gpu": 140.22
+      }
+    },
+    {
+      "elapsedSeconds": 7.02,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 7.07,
+        "main": 0.17,
+        "renderer": 4.41,
+        "gpu": 2.16
+      },
+      "memoryMb": {
+        "main": 214.58,
+        "renderer": 370.55,
+        "gpu": 143.34
+      }
+    },
+    {
+      "elapsedSeconds": 8.03,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.79,
+        "main": 1.57,
+        "renderer": 3.02,
+        "gpu": 1.95
+      },
+      "memoryMb": {
+        "main": 214.59,
+        "renderer": 370.8,
+        "gpu": 143.59
+      }
+    },
+    {
+      "elapsedSeconds": 9.03,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 8.32,
+        "main": 0.66,
+        "renderer": 4.72,
+        "gpu": 2.69
+      },
+      "memoryMb": {
+        "main": 214.59,
+        "renderer": 371.53,
+        "gpu": 144.45
+      }
+    },
+    {
+      "elapsedSeconds": 10.04,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.94,
+        "main": 1.12,
+        "renderer": 2.74,
+        "gpu": 1.85
+      },
+      "memoryMb": {
+        "main": 214.58,
+        "renderer": 370.94,
+        "gpu": 143.11
+      }
+    },
+    {
+      "elapsedSeconds": 11.04,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.5,
+        "main": 1.32,
+        "renderer": 3.06,
+        "gpu": 1.88
+      },
+      "memoryMb": {
+        "main": 214.58,
+        "renderer": 371.14,
+        "gpu": 143.28
+      }
+    },
+    {
+      "elapsedSeconds": 12.04,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 7.5,
+        "main": 0.27,
+        "renderer": 4.02,
+        "gpu": 2.91
+      },
+      "memoryMb": {
+        "main": 214.58,
+        "renderer": 371.33,
+        "gpu": 143.28
+      }
+    },
+    {
+      "elapsedSeconds": 13.05,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.29,
+        "main": 1.39,
+        "renderer": 3.16,
+        "gpu": 1.49
+      },
+      "memoryMb": {
+        "main": 214.58,
+        "renderer": 371.44,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 14.05,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.56,
+        "main": 1.83,
+        "renderer": 2.54,
+        "gpu": 0.95
+      },
+      "memoryMb": {
+        "main": 214.61,
+        "renderer": 371.44,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 15.05,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.38,
+        "main": 1.06,
+        "renderer": 3.88,
+        "gpu": 1.19
+      },
+      "memoryMb": {
+        "main": 214.61,
+        "renderer": 371.94,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 16.06,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.24,
+        "main": 1.67,
+        "renderer": 3.17,
+        "gpu": 1.16
+      },
+      "memoryMb": {
+        "main": 214.61,
+        "renderer": 372.05,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 17.06,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.7,
+        "main": 1.3,
+        "renderer": 3.64,
+        "gpu": 1.53
+      },
+      "memoryMb": {
+        "main": 214.63,
+        "renderer": 372.11,
+        "gpu": 143.28
+      }
+    },
+    {
+      "elapsedSeconds": 18.06,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.39,
+        "main": 1.44,
+        "renderer": 3.66,
+        "gpu": 1.09
+      },
+      "memoryMb": {
+        "main": 214.63,
+        "renderer": 372.25,
+        "gpu": 143.22
+      }
+    },
+    {
+      "elapsedSeconds": 19.07,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.24,
+        "main": 1.58,
+        "renderer": 2.51,
+        "gpu": 0.91
+      },
+      "memoryMb": {
+        "main": 214.63,
+        "renderer": 372.27,
+        "gpu": 143.22
+      }
+    },
+    {
+      "elapsedSeconds": 20.08,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.83,
+        "main": 1.5,
+        "renderer": 2.92,
+        "gpu": 1.13
+      },
+      "memoryMb": {
+        "main": 214.63,
+        "renderer": 372.3,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 21.08,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.35,
+        "main": 1.38,
+        "renderer": 2.67,
+        "gpu": 1.07
+      },
+      "memoryMb": {
+        "main": 214.61,
+        "renderer": 364.36,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 22.08,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 8.89,
+        "main": 1.71,
+        "renderer": 6.05,
+        "gpu": 0.9
+      },
+      "memoryMb": {
+        "main": 214.59,
+        "renderer": 365.8,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 23.09,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 9.21,
+        "main": 1.6,
+        "renderer": 6.25,
+        "gpu": 1.13
+      },
+      "memoryMb": {
+        "main": 214.59,
+        "renderer": 367.47,
+        "gpu": 143.2
+      }
+    },
+    {
+      "elapsedSeconds": 24.09,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.25,
+        "main": 1.42,
+        "renderer": 3.52,
+        "gpu": 1.06
+      },
+      "memoryMb": {
+        "main": 214.59,
+        "renderer": 367.58,
+        "gpu": 143.25
+      }
+    },
+    {
+      "elapsedSeconds": 25.1,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.85,
+        "main": 1.3,
+        "renderer": 3.08,
+        "gpu": 1.22
+      },
+      "memoryMb": {
+        "main": 214.59,
+        "renderer": 367.58,
+        "gpu": 143.22
+      }
+    },
+    {
+      "elapsedSeconds": 26.1,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.19,
+        "main": 1.6,
+        "renderer": 2.41,
+        "gpu": 0.9
+      },
+      "memoryMb": {
+        "main": 214.61,
+        "renderer": 367.69,
+        "gpu": 143.41
+      }
+    },
+    {
+      "elapsedSeconds": 27.1,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.41,
+        "main": 1.61,
+        "renderer": 2.53,
+        "gpu": 1.02
+      },
+      "memoryMb": {
+        "main": 214.61,
+        "renderer": 367.69,
+        "gpu": 143.41
+      }
+    },
+    {
+      "elapsedSeconds": 28.11,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 6.24,
+        "main": 1.5,
+        "renderer": 3.47,
+        "gpu": 1.01
+      },
+      "memoryMb": {
+        "main": 214.63,
+        "renderer": 355.08,
+        "gpu": 143.41
+      }
+    },
+    {
+      "elapsedSeconds": 29.11,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 5.09,
+        "main": 1.62,
+        "renderer": 2.37,
+        "gpu": 0.88
+      },
+      "memoryMb": {
+        "main": 214.63,
+        "renderer": 355.08,
+        "gpu": 143.41
+      }
+    },
+    {
+      "elapsedSeconds": 30.01,
+      "inMatch": true,
+      "cpuPercent": {
+        "total": 4.99,
+        "main": 0.87,
+        "renderer": 2.71,
+        "gpu": 1.15
+      },
+      "memoryMb": {
+        "main": 214.64,
+        "renderer": 355.08,
+        "gpu": 143.41
+      }
+    }
+  ],
+  "reportPath": "/Users/xapqrt/Documents/DawnClient/performance-reports/dawn-performance-2026-09-20T09-34-25-057Z.json"
+}
