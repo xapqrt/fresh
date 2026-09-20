@@ -91,26 +91,30 @@
   } catch (e) { console.warn('[dawn-timer] pump failed:', e); }
 })();
 
-// ── Raw-mouse kill switch ────────────────────────────────────────────────
-// unadjustedMovement takes over the OS-level HID path for the mouse. If the
-// process dies while that capture is still live, macOS can be left with a
-// corrupted HID state — reported as both buttons acting as right-click,
-// requiring the Bluetooth mouse to be removed and re-paired. That is a
-// system-level breakage, so raw input is OPT-IN and OFF by default:
+// ── Raw-mouse toggle + safe teardown ─────────────────────────────────────
+// unadjustedMovement takes over the OS-level HID path. If the process dies
+// while capture is live, macOS can be left with corrupted HID (both buttons
+// as right-click until BT re-pair). Fix: always release on unload/quit.
+// Raw is now ON by default for the 480Hz snappy-mouse feel; opt-out with:
 //
-//   enable : localStorage.setItem("dawn_raw_mouse", "true")  then relaunch
+//   disable: localStorage.setItem("dawn_raw_mouse", "false") then relaunch
 //   live   : window.__dawnRawMouseOverride = true | false
 //
 if (typeof window.__dawnRawMouseOverride === "undefined") window.__dawnRawMouseOverride = undefined;
 const _rawMouseOn = () => {
   if (typeof window.__dawnRawMouseOverride === "boolean") return window.__dawnRawMouseOverride;
-  try { return localStorage.getItem("dawn_raw_mouse") === "true"; } catch (e) { return false; }
+  try {
+    const v = localStorage.getItem("dawn_raw_mouse");
+    if (v === "false") return false;
+    return true; // default ON
+  } catch (e) { return true; }
 };
 
 // Never let the pointer lock / HID capture outlive the page or the process.
+// This is the fix for the BT corruption — we exitPointerLock on every
+// unload path, and main.js also calls dawn-teardown-input on before-quit.
 const _releaseMouse = () => {
   try {
-    window.__dawnRawMouseOverride = false;
     if (document.pointerLockElement) document.exitPointerLock();
   } catch (e) {}
 };
@@ -149,10 +153,9 @@ try {
       }
       return r;
     };
-    console.log(`[dawn-input] unadjustedMovement wrapper armed (raw=${_rawMouseOn()})`);
-    // Hint for users: enable raw mouse for snappy feel at 480Hz
+    console.log(`[dawn-input] unadjustedMovement wrapper armed (raw=${_rawMouseOn()} ON by default, safe teardown)`);
     if (!_rawMouseOn()) {
-      console.log('[dawn-input] raw mouse OFF by default (safe). Enable: localStorage.setItem("dawn_raw_mouse","true") then relaunch, or window.__dawnRawMouseOverride=true');
+      console.log('[dawn-input] raw mouse OFF (opt-out). Re-enable: localStorage.removeItem("dawn_raw_mouse") or set to "true"');
     }
   } catch (e) { console.warn('[dawn-input] raw mouse install failed:', e); }
 })();
@@ -235,6 +238,31 @@ try {
   } catch (e) {
     console.warn("[dawn-input] raw mouse stream failed:", e);
   }
+})();
+
+// ── Optional Sim-FPS overlay (cosmetic) ─────────────────────────────────
+// Kirka's #fps shows rendered FPS (60 on M4 Air panel). If you want the
+// overlay to read 480 like at 3929f4a, set:
+//   localStorage.setItem("dawn_sim_fps_overlay","true") then relaunch
+// This does NOT uncap presentation — it only rewrites the DOM text to Sim Hz
+// so the in-game counter matches the logic tick you actually get. OFF by default.
+(function installSimFpsOverlay() {
+  try {
+    let want = false;
+    try { want = localStorage.getItem("dawn_sim_fps_overlay") === "true"; } catch(e){}
+    if (!want) return;
+    const patchFps = () => {
+      const el = document.getElementById("fps");
+      if (!el) return;
+      const tickMul = window.__dawnTickMul || 1;
+      const simHz = Math.round(tickMul*60);
+      // Preserve original if it contains extra text, else just show sim
+      if (el.dataset.dawnOrig == null) el.dataset.dawnOrig = el.textContent;
+      el.textContent = String(simHz);
+    };
+    setInterval(patchFps, 200);
+    console.log('[dawn-overlay] Sim-FPS overlay enabled (cosmetic, render still 60)');
+  } catch(e){}
 })();
 
 // ── Desynchronized canvas (Windows/Linux only) ────────────────────────────
