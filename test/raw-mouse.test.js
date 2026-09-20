@@ -2,7 +2,11 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { installRawMouse } = require("../src/preload/game/raw-mouse");
+const {
+  classifyPollingRate,
+  installRawMouse,
+  pollingProfileForRate,
+} = require("../src/preload/game/raw-mouse");
 
 class FakeTarget {
   constructor(parent = null) {
@@ -134,6 +138,15 @@ function createEnvironment({ rawLockResult } = {}) {
   };
 }
 
+test("classifies common polling rates and widens mismatch tolerance at high rate", () => {
+  assert.equal(classifyPollingRate(8), 125);
+  assert.equal(classifyPollingRate(1), 1000);
+  assert.equal(classifyPollingRate(0.5), 2000);
+  assert.equal(classifyPollingRate(0.125), 8000);
+  assert.equal(pollingProfileForRate(8000).mismatchLimit, 10);
+  assert.ok(pollingProfileForRate(8000).reconciliationWindowMs < pollingProfileForRate(500).reconciliationWindowMs);
+});
+
 test("mirrors raw deltas and suppresses only the later duplicate native move", () => {
   const env = createEnvironment();
   const settings = { high_rate_mouse: true, raw_mouse_input: false };
@@ -157,6 +170,50 @@ test("mirrors raw deltas and suppresses only the later duplicate native move", (
   assert.equal(native.__immediateStopped, true);
   assert.equal(api.getStats().syntheticMouseMoves, 1);
   assert.equal(api.getStats().suppressedMouseMoves, 1);
+  api.destroy();
+});
+
+test("adapts reconciliation profile to the delivered mouse polling rate", () => {
+  const env = createEnvironment();
+  const api = installRawMouse({
+    windowObject: env.windowObject,
+    documentObject: env.documentObject,
+    settings: { high_rate_mouse: true },
+    now: env.now,
+  });
+
+  for (let index = 0; index < 32; index++) {
+    env.setNow(10 + index * 0.5);
+    env.emitRaw({ movementX: 1 });
+    env.emitNative({ movementX: 1 });
+  }
+
+  const stats = api.getStats();
+  assert.equal(stats.pollingRateHz, 2000);
+  assert.equal(stats.mismatchLimit, 6);
+  assert.equal(stats.reconciliationWindowMs, 32);
+  api.destroy();
+});
+
+test("polling tolerance never drops a small native movement difference", () => {
+  const env = createEnvironment();
+  const api = installRawMouse({
+    windowObject: env.windowObject,
+    documentObject: env.documentObject,
+    settings: { high_rate_mouse: true },
+    now: env.now,
+  });
+  const gameDeltas = [];
+  env.lockElement.addEventListener("mousemove", (event) => gameDeltas.push(event.movementX));
+
+  env.setNow(10);
+  env.emitRaw({ movementX: 1 });
+  env.setNow(11);
+  env.emitNative({ movementX: 1.04 });
+
+  assert.equal(api.getStats().movementMatches, 1);
+  assert.equal(api.getStats().correctionMouseMoves, 1);
+  assert.ok(Math.abs(gameDeltas.reduce((sum, value) => sum + value, 0) - 1.04) < 1e-9);
   api.destroy();
 });
 
@@ -225,7 +282,7 @@ test("falls back to trusted native movement after repeated raw/native mismatches
   const gameDeltas = [];
   env.lockElement.addEventListener("mousemove", (event) => gameDeltas.push(event.movementX));
 
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < 4; index++) {
     env.setNow(10 + index * 2);
     env.emitRaw({ movementX: 1 });
     env.setNow(11 + index * 2);
@@ -238,8 +295,8 @@ test("falls back to trusted native movement after repeated raw/native mismatches
   env.setNow(21);
   env.emitNative({ movementX: 4 });
 
-  assert.deepEqual(gameDeltas, [1, 2, 1, 2, 1, 2, 4]);
-  assert.equal(gameDeltas.reduce((sum, value) => sum + value, 0), 13);
+  assert.deepEqual(gameDeltas, [1, 2, 1, 2, 1, 2, 1, 2, 4]);
+  assert.equal(gameDeltas.reduce((sum, value) => sum + value, 0), 16);
   api.destroy();
 });
 

@@ -862,6 +862,7 @@
               <option value="60">60 FPS</option>
               <option value="120">120 FPS (needs 120Hz+ display)</option>
               <option value="144">144 FPS (needs 144Hz+ display)</option>
+              <option value="165">165 FPS (needs 165Hz+ display)</option>
               <option value="240">240 FPS (needs 240Hz+ display)</option>
             </select>
           </div>
@@ -876,10 +877,18 @@
             </select>
           </div>
         </div>
+        <div class="option">
+          <div class="left"><span>Fixed-Step Pacing</span><span class="description">Splits high simulation rates into bounded fixed updates aligned to the active display. Drops stale catch-up work after a hitch instead of replaying it.</span></div>
+          <div class="switch"><input type="checkbox" id="fixed_step_simulation" data-setting="fixed_step_simulation" /><label for="fixed_step_simulation"></label></div>
+        </div>
         <div class="option"><div class="left"><span>Interp Delay</span><span class="description">33ms keeps one server snapshot for the lowest enemy-render latency; 66/99ms are smoother when the connection jitters.</span></div><div class="right">
             <input type="text" placeholder="75" maxlength="3" class="value interp-delay" data-setting="interp_delay_ms" />
             <input type="range" min="33" max="200" step="1" class="range interp-delay" data-setting="interp_delay_ms" />
           </div>
+        </div>
+        <div class="option">
+          <div class="left"><span>Adaptive Interpolation</span><span class="description">Starts at your delay above, adds snapshots when packet arrival jitter rises, then returns slowly after the connection stabilizes.</span></div>
+          <div class="switch"><input type="checkbox" id="adaptive_interpolation" data-setting="adaptive_interpolation" /><label for="adaptive_interpolation"></label></div>
         </div>
         <div class="option"><div class="left requires-restart"><span>Compositor Profile</span><span class="description">Bench-lab for frame pacing. stock is the smooth verified ride; uncap* uncorks the old client's flags — can look worse, so test with your eyes.</span></div><div class="custom-select">
             <select id="engine_profile" data-setting="engine_profile">

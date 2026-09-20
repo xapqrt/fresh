@@ -192,6 +192,36 @@ const armSyntheticKeyFailsafe = () => {
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
 
+const getActiveGameDisplay = () => {
+  try {
+    if (gameWindow && !gameWindow.isDestroyed()) {
+      return screen.getDisplayMatching(gameWindow.getBounds());
+    }
+    return screen.getPrimaryDisplay();
+  } catch (error) {
+    return null;
+  }
+};
+
+let _lastDisplayProfileKey = "";
+const sendDisplayProfile = (force = false) => {
+  if (!gameWindow || gameWindow.isDestroyed()) return null;
+  const display = getActiveGameDisplay();
+  const refreshHz = Math.max(30, Math.round(display?.displayFrequency) || 60);
+  const profile = {
+    id: display?.id ?? null,
+    refreshHz,
+    frameIntervalMs: +(1000 / refreshHz).toFixed(3),
+    scaleFactor: Number(display?.scaleFactor) || 1,
+  };
+  const key = `${profile.id}:${profile.refreshHz}:${profile.scaleFactor}`;
+  if (force || key !== _lastDisplayProfileKey) {
+    _lastDisplayProfileKey = key;
+    try { gameWindow.webContents.send("display-profile", profile); } catch (error) {}
+  }
+  return profile;
+};
+
 // FPS cap: webContents.setFrameRate pins the page frame rate.
 // SAFETY: it is always clamped to the display's actual refresh rate —
 // requesting a rate HIGHER than the panel can present makes Chromium
@@ -204,8 +234,7 @@ const applyFrameCap = () => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   const cap = Number(settings.fps_cap) || 0;
   try {
-    const display = screen.getDisplayMatching(gameWindow.getBounds());
-    const displayHz = Math.round(display?.displayFrequency) || 60;
+    const displayHz = sendDisplayProfile()?.refreshHz || 60;
     const effectiveHz = cap > 0 ? Math.min(cap, displayHz) : displayHz;
     // Always write the effective value. Previously selecting 30 FPS and then
     // returning to "No cap" left WebContents pinned at 30 until a restart.
@@ -214,31 +243,69 @@ const applyFrameCap = () => {
 };
 
 // ── High-refresh monitor path ─────────────────────────────────────────────
-// If an external 120Hz+ display is connected, auto-lift the FPS cap and
-// logic tick to actually use it; the 60Hz built-in panel can't present
-// faster than 60, so this no-ops there. Restores defaults when the high-Hz
-// display goes away. Opt-out via the high_refresh_auto setting.
+// Follow the display that actually contains the game window. Moving Dawn
+// between Spaces/monitors reapplies the presentation cap and publishes the
+// panel phase to the renderer; merely connecting an unused monitor does not
+// change simulation settings. Opt out via high_refresh_auto.
 const _HIGH_REFRESH_THRESHOLD = 120;
-let _highRefreshActive = false;
+let _highRefreshProfile = "";
+let _autoRefreshCap = null;
+let _autoRefreshTick = null;
 const applyHighRefreshPath = () => {
-  if (settings.high_refresh_auto === false) return;
-  try {
-    const displays = screen.getAllDisplays();
-    const maxHz = displays.reduce((m, d) => Math.max(m, Math.round(d.displayFrequency) || 0), 0);
-    const wantsHigh = maxHz >= _HIGH_REFRESH_THRESHOLD;
-    if (wantsHigh === _highRefreshActive) return;
-    _highRefreshActive = wantsHigh;
-    if (wantsHigh) {
-      const cap = maxHz >= 240 ? 240 : maxHz >= 144 ? 144 : 120;
-      _setSetting("fps_cap", cap);
-      _setSetting("logic_tick_rate", "480");
-      console.log(`[monitor] ${maxHz}Hz display detected — enabling ${cap} FPS cap + 480Hz logic tick`);
-    } else {
+  const profile = sendDisplayProfile();
+  const activeHz = profile?.refreshHz || 60;
+  applyFrameCap();
+  if (settings.high_refresh_auto === false) {
+    if (_autoRefreshCap !== null && Number(settings.fps_cap) === _autoRefreshCap) {
       _setSetting("fps_cap", 0);
+    }
+    if (_autoRefreshTick !== null && String(settings.logic_tick_rate) === _autoRefreshTick) {
       _setSetting("logic_tick_rate", "60");
-      console.log(`[monitor] high-refresh display removed (${maxHz}Hz) — restoring defaults`);
+    }
+    _autoRefreshCap = null;
+    _autoRefreshTick = null;
+    return;
+  }
+  try {
+    const wantsHigh = activeHz >= _HIGH_REFRESH_THRESHOLD;
+    const cap = activeHz >= 240 ? 240 : activeHz >= 165 ? 165 : activeHz >= 144 ? 144 : 120;
+    const profileKey = wantsHigh ? `${profile?.id}:${activeHz}:${cap}` : `${profile?.id}:${activeHz}:stock`;
+    if (profileKey === _highRefreshProfile) return;
+    _highRefreshProfile = profileKey;
+
+    if (wantsHigh) {
+      // Auto-select only from an uncapped/default state. Explicit 30/60 caps
+      // and an explicit 960 Hz simulation choice remain user-owned.
+      if ((Number(settings.fps_cap) || 0) === 0 || Number(settings.fps_cap) === _autoRefreshCap) {
+        _autoRefreshCap = cap;
+        _setSetting("fps_cap", cap);
+      }
+      if (String(settings.logic_tick_rate || "60") === "60" || String(settings.logic_tick_rate) === _autoRefreshTick) {
+        _autoRefreshTick = "480";
+        _setSetting("logic_tick_rate", _autoRefreshTick);
+      }
+      console.log(`[monitor] game window on ${activeHz}Hz display — phase profile ${cap} FPS / ${settings.logic_tick_rate}Hz simulation`);
+    } else {
+      if (_autoRefreshCap !== null && Number(settings.fps_cap) === _autoRefreshCap) {
+        _setSetting("fps_cap", 0);
+      }
+      if (_autoRefreshTick !== null && String(settings.logic_tick_rate) === _autoRefreshTick) {
+        _setSetting("logic_tick_rate", "60");
+      }
+      _autoRefreshCap = null;
+      _autoRefreshTick = null;
+      console.log(`[monitor] game window on ${activeHz}Hz display — restoring its previous stock cadence`);
     }
   } catch (e) {}
+};
+
+let _displaySyncTimer = null;
+const scheduleDisplaySync = (immediate = false) => {
+  clearTimeout(_displaySyncTimer);
+  _displaySyncTimer = setTimeout(() => {
+    _displaySyncTimer = null;
+    applyHighRefreshPath();
+  }, immediate ? 0 : 80);
 };
 
 // ── Settings: in-memory update + renderer broadcast are immediate; the
@@ -249,6 +316,10 @@ const _setSetting = (key, value) => {
   if (key === "fps_cap") value = Number(value) || 0;
   settings[key] = value;
   if (key === "fps_cap") applyFrameCap();
+  if (key === "high_refresh_auto") {
+    _highRefreshProfile = "";
+    applyHighRefreshPath();
+  }
   if (key === "performance_mode") syncPerformanceLock();
   if (gameWindow && !gameWindow.isDestroyed()) {
     gameWindow.webContents.send("settings-updated", settings);
@@ -616,6 +687,9 @@ const pruneBundleCache = () => {
     if (!fs.existsSync(d)) return;
     const keep = '.p' + PATCH_VERSION;
     for (const f of fs.readdirSync(d)) {
+      // Metadata is not a patched bundle and must survive patch-version
+      // pruning; deleting it made the advertised warm-start shortcut inert.
+      if (f === 'last-bundle-url.txt' || f.endsWith(keep + '.tmp')) continue;
       if (!f.endsWith(keep)) {
         try { fs.unlinkSync(path.join(d, f)); console.log('[dawn-patch] pruned stale bundle cache:', f); } catch (e) {}
       }
@@ -638,15 +712,16 @@ const _cacheGet = (key) => {
   } catch (e) {}
   return null;
 };
-const _cacheSet = (key, data) => {
+const _cacheSet = async (key, data) => {
+  // Serve from memory immediately; persist the multi-megabyte bundle without
+  // blocking the main process and WindowServer during startup.
   _bundleCache.set(key, data);
   try {
     const d = _cacheDir();
-    fs.mkdirSync(d, { recursive: true });
+    await fs.promises.mkdir(d, { recursive: true });
     const f = path.join(d, _cacheKey(key));
-    // Atomic: write tmp then renameSync so cached bundle is immediately accessible
-    fs.writeFileSync(f + '.tmp', data, 'utf-8');
-    fs.renameSync(f + '.tmp', f);
+    await fs.promises.writeFile(f + '.tmp', data, 'utf-8');
+    await fs.promises.rename(f + '.tmp', f);
   } catch (e) {}
 };
 let _patchProtocolRegistered = false;
@@ -735,56 +810,53 @@ const PATCHES = [
     needle: "'range','min':'1','max':'3','step':'0.1'",
     replacement: "'range','min':'1','max':'5','step':'0.1'",
   },
-  // Fix 0.5x time scaling and eliminate delta jitter at uncapped FPS: use instantaneous frame-accurate delta.
-  // window.__dawnTickMul (set from the menu "Logic Tick Rate") divides the
-  // re-schedule interval, overclocking the game's self-scheduling main
-  // loop: 2 = ~120Hz logic, 4 = ~240Hz logic. Default 1 = stock 60Hz.
-  // EXPERIMENTAL: if the world starts moving at 2x speed the tick uses a
-  // fixed dt instead of the measured one — set the rate back to 60.
+  // Route the game update through Dawn's bounded fixed-step clock. Stock 60 Hz
+  // remains a single variable update; higher rates subdivide elapsed display
+  // time into fixed slices and drop stale catch-up debt after a hitch/resume.
   {
-    name: 'gameLoopDeltaFix',
+    name: 'gameLoopFixedStep',
     needle: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),iL[dhc(0x3918)](0x1/ iM*window[dhc(0x243e)])",
-    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now();var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;window.__dawnTickDt=_dt;iL[dhc(0x3918)](_dt/(window.__dawnTickMul||1)*window[dhc(0x243e)]);})()",
+    replacement: "window['wmwMNWn']=iM,iL[dhc(0x6857)][dhc(0x2eb5)]=Date[dhc(0x2eb5)](),(function(){var _now=performance.now(),_clock=window.__dawnSimulationClock,_mul=window.__dawnTickMul||1;if(_clock&&_clock.advance){_clock.advance(iL,dhc(0x3918),window[dhc(0x243e)],_now,60*_mul,window.__dawnDisplayHz||60,window.__dawnFixedStep!==false,0x1/iM)}else{var _dt=window.__lastMainDelta?Math.min(Math.max((_now-window.__lastMainDelta)/1000,0.0005),0.05):0.016;window.__lastMainDelta=_now;window.__dawnTickDt=_dt;iL[dhc(0x3918)](_dt/_mul*window[dhc(0x243e)])}})()",
   },
   {
-    name: 'interpDelaySlider',
+    name: 'adaptiveInterpolation',
     needle: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:0x3,j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];",
-    replacement: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:(window.__dawnInterpDelayMs?Math.max(1,Math.min(j0['length']-1,Math.round(window.__dawnInterpDelayMs/33))):0x3),j5=j0[Math['max'](0x0,j0['length']-j4)][deT(0x6857)];window.__dawnInterpSnapshots=j4;",
+    replacement: "var j4=v['a'][deT(0x4015)]['game']['WwNmWMw']?0x6:(window.__dawnInterpolation&&j0.length?window.__dawnInterpolation.select(j0.length,j0[j0.length-1][deT(0x6857)],window.__dawnInterpDelayMs||75):Math.max(1,Math.min(j0.length-1,Math.round((window.__dawnInterpDelayMs||75)/33)))),j5=j0[Math.max(0,j0.length-j4)][deT(0x6857)];window.__dawnInterpSnapshots=j4;",
   },
   {
     name: 'remotePlaybackClockA',
     needle: "iX['WnwNMmWw']+=0x3e8*iM*(0x1+",
-    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1)*(0x1+",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnRemoteClockScale||1)*(0x1+",
   },
   {
     name: 'remotePlaybackClockA2',
     needle: "iX[deT(0x2087)]+=0x3e8*iM*(0x1+",
-    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1)*(0x1+",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnRemoteClockScale||1)*(0x1+",
   },
   {
     name: 'remotePlaybackClockB',
     needle: "iX['WnwNMmWw']+=0x3e8*iM*1.1",
-    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1)*1.1",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnRemoteClockScale||1)*1.1",
   },
   {
     name: 'remotePlaybackClockB2',
     needle: "iX[deT(0x2087)]+=0x3e8*iM*1.1",
-    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1)*1.1",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnRemoteClockScale||1)*1.1",
   },
   {
     name: 'remotePlaybackClockC',
     needle: "iX[deT(0x2087)]+=0x3e8*iM;",
-    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnTickMul||1);",
+    replacement: "iX[deT(0x2087)]+=0x3e8*iM*(window.__dawnRemoteClockScale||1);",
   },
   {
     name: 'remotePlaybackClockC2',
     needle: "iX['WnwNMmWw']+=0x3e8*iM;",
-    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnTickMul||1);",
+    replacement: "iX['WnwNMmWw']+=0x3e8*iM*(window.__dawnRemoteClockScale||1);",
   },
   {
     name: 'remotePlaybackClockRollback',
     needle: "iX[deT(0x2087)]-=0x3e8*iM,",
-    replacement: "iX[deT(0x2087)]-=0x3e8*iM*(window.__dawnTickMul||1),",
+    replacement: "iX[deT(0x2087)]-=0x3e8*iM*(window.__dawnRemoteClockScale||1),",
   },
 ];
 
@@ -827,7 +899,7 @@ const patchAndCache = async (targetScriptUrl) => {
     }
     const { code: patched, meta } = applyPatches(code);
     const finalCode = patched + `\n//# sourceURL=${targetScriptUrl}` + `\nwindow.__patchMeta = ${JSON.stringify(meta)};`;
-    _cacheSet(targetScriptUrl, finalCode);
+    void _cacheSet(targetScriptUrl, finalCode);
     const patchMs = Date.now() - t0;
     _startupMetrics["bundle fetch and patch"] = patchMs;
     console.log(`[dawn-patch] ${meta.applied.length ? 'patched' : 'passthrough'} ${new URL(targetScriptUrl).pathname.split('/').pop()} in ${patchMs}ms — applied:[${meta.applied.join(',') || '-'}] missing:[${meta.missing.join(',') || '-'}]`);
@@ -846,9 +918,9 @@ const patchAndCache = async (targetScriptUrl) => {
 // (never gates it) — a slow fetch must not delay startup.
 //
 // Warm-start shortcut: remember the last seen app.<hash>.js URL. If the
-// bundle for it is already on disk we skip the index-HTML fetch entirely
-// (one less network round-trip per warm launch); if the game shipped a new
-// bundle the URL miss falls through to the live index fetch.
+// bundle for it is already on disk we can serve immediately without gating
+// startup on index HTML. A delayed revalidation prepares a newly shipped hash;
+// the request interceptor still patches any current bundle URL on demand.
 const _lastBundleUrlFile = () => path.join(_cacheDir(), 'last-bundle-url.txt');
 const _rememberBundleUrl = (url) => {
   try {
@@ -856,24 +928,54 @@ const _rememberBundleUrl = (url) => {
     fs.writeFileSync(_lastBundleUrlFile(), url, 'utf-8');
   } catch (e) {}
 };
+const discoverCurrentBundleUrl = async (base) => {
+  const html = await fetchText(base);
+  const match = html.match(/assets\/js\/(app\.\w+\.js)/);
+  if (!match) return null;
+  return { url: new URL(match[0], base).href, fileName: match[1] };
+};
+
+const revalidateBundleCache = async (base, previousUrl = "") => {
+  try {
+    const current = await discoverCurrentBundleUrl(base);
+    if (!current) {
+      console.warn('[dawn-patch] revalidate: app bundle URL not found in index page');
+      return false;
+    }
+    if (!_cacheGet(current.url)) await patchAndCache(current.url);
+    _rememberBundleUrl(current.url);
+    if (previousUrl && current.url !== previousUrl) {
+      console.log(`[dawn-patch] revalidate: prepared new bundle ${current.fileName} in background`);
+    }
+    return true;
+  } catch (error) {
+    console.warn('[dawn-patch] background revalidation failed:', error.message);
+    return false;
+  }
+};
+
 const warmBundleCache = async () => {
   try {
     const base = settings.base_url || 'https://kirka.io/';
     try {
       const lastUrl = fs.readFileSync(_lastBundleUrlFile(), 'utf-8').trim();
       if (lastUrl && _cacheGet(lastUrl)) {
-        console.log('[dawn-patch] warm: cached bundle URL from last run, skipping index fetch');
+        console.log('[dawn-patch] warm: loaded last versioned bundle immediately');
+        // Do not gate startup on index HTML. Revalidate after the first paint so
+        // a newly deployed bundle is ready for the next navigation/request.
+        setTimeout(() => { void revalidateBundleCache(base, lastUrl); }, 250);
         return true;
       }
     } catch (e) {}
-    const html = await fetchText(base);
-    const m = html.match(/assets\/js\/(app\.\w+\.js)/);
-    if (!m) { console.warn('[dawn-patch] warm: app bundle URL not found in index page'); return false; }
-    // Use m[0] ('assets/js/app.xxx.js') to avoid fetching the HTML fallback at root
-    const url = new URL(m[0], base).href;
-    if (_cacheGet(url)) { _rememberBundleUrl(url); console.log('[dawn-patch] warm: already cached', m[1]); return true; }
-    await patchAndCache(url);
-    _rememberBundleUrl(url);
+
+    const current = await discoverCurrentBundleUrl(base);
+    if (!current) {
+      console.warn('[dawn-patch] warm: app bundle URL not found in index page');
+      return false;
+    }
+    if (!_cacheGet(current.url)) await patchAndCache(current.url);
+    _rememberBundleUrl(current.url);
+    console.log('[dawn-patch] warm: prepared', current.fileName);
     return true;
   } catch (err) {
     console.warn('[dawn-patch] warm failed:', err.message);
@@ -1005,6 +1107,7 @@ const createWindow = () => {
     _failLoadAttempt = 0;
     _perf('game did-finish-load');
     applyFrameCap();
+    sendDisplayProfile(true);
     try {
       gameWindow.webContents.executeJavaScript(
         'if (performance.memory) console.log("[mem] heap after load:", Math.round(performance.memory.usedJSHeapSize / 1048576) + "MB");'
@@ -1140,6 +1243,10 @@ const createWindow = () => {
   });
 
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
+  gameWindow.on("move", () => scheduleDisplaySync());
+  gameWindow.on("resize", () => scheduleDisplaySync());
+  gameWindow.on("enter-full-screen", () => scheduleDisplaySync(true));
+  gameWindow.on("leave-full-screen", () => scheduleDisplaySync(true));
 
   gameWindow.on("closed", () => {
     if (_activePerformanceBenchmark) {
@@ -1148,6 +1255,9 @@ const createWindow = () => {
     clearTimeout(_focusInputResetTimer);
     _focusInputResetTimer = null;
     _focusInputResetPending = false;
+    clearTimeout(_displaySyncTimer);
+    _displaySyncTimer = null;
+    _lastDisplayProfileKey = "";
     releaseSyntheticKeys();
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
@@ -1163,6 +1273,8 @@ const createWindow = () => {
   });
 
   gameWindow.on("focus", () => {
+    scheduleDisplaySync(true);
+    try { gameWindow.webContents.send("dawn-focus-reset"); } catch (error) {}
     if (!_focusInputResetPending) return;
     _focusInputResetPending = false;
     sanitizeInputAfterFocus(true);
@@ -1429,9 +1541,11 @@ const _finishPerformanceBenchmark = async (benchmark) => {
       engineProfile: settings.engine_profile,
       fpsCap: Number(settings.fps_cap) || 0,
       logicTickRate: Number(settings.logic_tick_rate) || 60,
+      fixedStepSimulation: settings.fixed_step_simulation !== false,
       highRateMouse: settings.high_rate_mouse !== false,
       unadjustedMouse: settings.raw_mouse_input === true,
       interpolationDelayMs: Number(settings.interp_delay_ms) || 75,
+      adaptiveInterpolation: settings.adaptive_interpolation !== false,
       performanceMode: settings.performance_mode !== false,
       performanceLockActive: isPerformanceLockActive(),
       thermalGuard: settings.thermal_guard !== false,
@@ -1785,9 +1899,9 @@ app.on("ready", () => {
   // panel layout changes (e.g. plugging in a 144Hz monitor). Registered only
   // after ready: `screen` reads are unsafe earlier.
   try {
-    screen.on("display-added", () => applyHighRefreshPath());
-    screen.on("display-removed", () => applyHighRefreshPath());
-    screen.on("display-metrics-changed", () => applyHighRefreshPath());
+    screen.on("display-added", () => scheduleDisplaySync());
+    screen.on("display-removed", () => scheduleDisplaySync());
+    screen.on("display-metrics-changed", () => scheduleDisplaySync());
   } catch (e) {}
   syncPerformanceLock();
   initGame();
@@ -1834,6 +1948,8 @@ app.on("before-quit", () => {
   clearTimeout(_focusInputResetTimer);
   _focusInputResetTimer = null;
   _focusInputResetPending = false;
+  clearTimeout(_displaySyncTimer);
+  _displaySyncTimer = null;
   stopPerformanceLock();
   releaseSyntheticKeys();
   globalShortcut.unregisterAll();

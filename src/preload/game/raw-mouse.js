@@ -4,8 +4,32 @@ const { round, summarizeSeries } = require("../../util/perf-metrics");
 
 const ACTIVE_INTERVAL_MAX_MS = 100;
 const RATE_STALE_MS = 250;
-const NATIVE_FALLBACK_MS = 50;
 const ROLLING_INTERVALS = 256;
+const KNOWN_POLLING_RATES = [125, 250, 500, 1000, 2000, 4000, 8000];
+
+const classifyPollingRate = (intervalMs) => {
+  const measuredHz = intervalMs > 0 ? 1000 / intervalMs : 0;
+  if (!Number.isFinite(measuredHz) || measuredHz < 60) return 0;
+  let closest = KNOWN_POLLING_RATES[0];
+  let distance = Math.abs(measuredHz - closest);
+  for (let index = 1; index < KNOWN_POLLING_RATES.length; index++) {
+    const candidateDistance = Math.abs(measuredHz - KNOWN_POLLING_RATES[index]);
+    if (candidateDistance < distance) {
+      closest = KNOWN_POLLING_RATES[index];
+      distance = candidateDistance;
+    }
+  }
+  return closest;
+};
+
+const pollingProfileForRate = (rateHz) => {
+  const rate = Number(rateHz) || 1000;
+  if (rate >= 8000) return { reconciliationWindowMs: 20, mismatchLimit: 10, deltaTolerance: 0.12 };
+  if (rate >= 4000) return { reconciliationWindowMs: 24, mismatchLimit: 8, deltaTolerance: 0.1 };
+  if (rate >= 2000) return { reconciliationWindowMs: 32, mismatchLimit: 6, deltaTolerance: 0.08 };
+  if (rate >= 1000) return { reconciliationWindowMs: 40, mismatchLimit: 4, deltaTolerance: 0.05 };
+  return { reconciliationWindowMs: 50, mismatchLimit: 3, deltaTolerance: 0.02 };
+};
 // Enough for a full 30-second run at ~1 kHz without dynamic Array growth.
 // Higher-polling devices retain a representative prefix and report overflow.
 const MAX_CAPTURE_SAMPLES = 32768;
@@ -131,6 +155,7 @@ const unsupportedApi = (reason) => ({
   finishCapture: () => null,
   sampleFrame: () => {},
   getStats: () => ({ supported: false, reason }),
+  reset: () => {},
   destroy: () => {},
 });
 
@@ -176,8 +201,14 @@ function installRawMouse(options = {}) {
   let pendingRawX = 0;
   let pendingRawY = 0;
   let pendingRawEvents = 0;
+  let pendingRawLastAt = 0;
   let consecutiveMovementMismatches = 0;
   let lastRawAt = 0;
+  let lastRawSampleAt = 0;
+  let rawIntervalEwma = 1;
+  let rawIntervalSamples = 0;
+  let pollingRateHz = 1000;
+  let pollingProfile = pollingProfileForRate(pollingRateHz);
   let lastNativeAt = 0;
   let pointerLockPatched = false;
   let nativeRequestPointerLock = null;
@@ -194,9 +225,11 @@ function installRawMouse(options = {}) {
     passedNativeMouseMoves: 0,
     movementMatches: 0,
     movementMismatches: 0,
+    lateReconciliations: 0,
     lockChanges: 0,
     focusResets: 0,
     normalizedControlClicks: 0,
+    pollingProfileChanges: 0,
     unadjusted: {
       attempts: 0,
       accepted: 0,
@@ -211,14 +244,40 @@ function installRawMouse(options = {}) {
   const isPointerLocked = () => Boolean(documentObject.pointerLockElement);
   const isMoving = (event) => (Number(event?.movementX) || 0) !== 0 || (Number(event?.movementY) || 0) !== 0;
 
+  const updatePollingProfile = (timestamp, moving) => {
+    if (!moving) return;
+    if (lastRawSampleAt) {
+      const interval = timestamp - lastRawSampleAt;
+      if (interval > 0.05 && interval <= 16) {
+        // An EWMA ignores occasional event-loop stalls while adapting within a
+        // few dozen samples when a different mouse/polling mode is selected.
+        rawIntervalEwma = rawIntervalSamples
+          ? rawIntervalEwma * 0.9 + interval * 0.1
+          : interval;
+        rawIntervalSamples++;
+        if (rawIntervalSamples >= 16 && rawIntervalSamples % 8 === 0) {
+          const classified = classifyPollingRate(rawIntervalEwma);
+          if (classified && classified !== pollingRateHz) {
+            pollingRateHz = classified;
+            pollingProfile = pollingProfileForRate(classified);
+            state.pollingProfileChanges++;
+          }
+        }
+      }
+    }
+    lastRawSampleAt = timestamp;
+  };
+
   const resetBridgeState = (countFocusReset = true) => {
     rawActiveForLock = false;
     bridgeDisabledForLock = false;
     pendingRawX = 0;
     pendingRawY = 0;
     pendingRawEvents = 0;
+    pendingRawLastAt = 0;
     consecutiveMovementMismatches = 0;
     lastRawAt = 0;
+    lastRawSampleAt = 0;
     lastNativeAt = 0;
     state.pointerLocked = isPointerLocked();
     if (countFocusReset) {
@@ -281,6 +340,7 @@ function installRawMouse(options = {}) {
     state.supported = true;
     state.rawEvents++;
     recordRate(rawRate, timestamp, moving);
+    updatePollingProfile(timestamp, moving);
     if (capture) recordCaptureEvent(capture.rawPointer, event, timestamp, true);
 
     if (!highRateEnabled() || bridgeDisabledForLock || !moving) return;
@@ -299,6 +359,7 @@ function installRawMouse(options = {}) {
       pendingRawX += Number(event.movementX) || 0;
       pendingRawY += Number(event.movementY) || 0;
       pendingRawEvents++;
+      pendingRawLastAt = timestamp;
       state.syntheticMouseMoves++;
       if (capture) capture.bridge.syntheticMouseMoves++;
     } catch (error) {
@@ -329,50 +390,62 @@ function installRawMouse(options = {}) {
     if (pendingRawEvents > 0) {
       const nativeX = Number(event.movementX) || 0;
       const nativeY = Number(event.movementY) || 0;
+      const sampleTolerance = pollingProfile.deltaTolerance * Math.sqrt(Math.max(1, pendingRawEvents));
       const axisMatches = (raw, native) =>
-        Math.abs(raw - native) <= Math.max(0.01, Math.abs(raw) * 0.01, Math.abs(native) * 0.01);
+        Math.abs(raw - native) <= Math.max(sampleTolerance, Math.abs(raw) * 0.01, Math.abs(native) * 0.01);
       const movementMatches = axisMatches(pendingRawX, nativeX) && axisMatches(pendingRawY, nativeY);
+      const reconciliationAge = pendingRawLastAt ? timestamp - pendingRawLastAt : 0;
+      const lateReconciliation = reconciliationAge > pollingProfile.reconciliationWindowMs;
       if (movementMatches) {
         state.movementMatches++;
         consecutiveMovementMismatches = 0;
         if (capture) capture.bridge.movementMatches++;
       } else {
         state.movementMismatches++;
-        consecutiveMovementMismatches++;
+        if (lateReconciliation) {
+          // A delayed compatibility aggregate can cross a batching boundary.
+          // Reconcile its delta, but do not punish the bridge as if the current
+          // polling profile had produced a prompt mismatched pair.
+          state.lateReconciliations++;
+          if (capture) capture.bridge.lateReconciliations++;
+          consecutiveMovementMismatches = 0;
+        } else {
+          consecutiveMovementMismatches++;
+        }
         if (capture) capture.bridge.movementMismatches++;
+      }
 
-        // The raw movement is already applied. Reconcile any difference before
-        // suppressing the native aggregate so total sensitivity remains equal
-        // to Chromium's native path even when event grouping differs.
-        const correctionX = nativeX - pendingRawX;
-        const correctionY = nativeY - pendingRawY;
-        if (correctionX !== 0 || correctionY !== 0) {
-          try {
-            const target = documentObject.pointerLockElement;
-            target?.dispatchEvent(createSyntheticMouseMove(event, correctionX, correctionY));
-            state.syntheticMouseMoves++;
-            state.correctionMouseMoves++;
-            if (capture) {
-              capture.bridge.syntheticMouseMoves++;
-              capture.bridge.correctionMouseMoves++;
-            }
-          } catch (error) {
-            state.bridgeError = error?.message || String(error);
+      // Tolerance controls mismatch classification only. Always reconcile even
+      // a sub-unit difference so adjusted high-rate input keeps exactly the
+      // same total movement as Chromium's native compatibility event.
+      const correctionX = nativeX - pendingRawX;
+      const correctionY = nativeY - pendingRawY;
+      if (correctionX !== 0 || correctionY !== 0) {
+        try {
+          const target = documentObject.pointerLockElement;
+          target?.dispatchEvent(createSyntheticMouseMove(event, correctionX, correctionY));
+          state.syntheticMouseMoves++;
+          state.correctionMouseMoves++;
+          if (capture) {
+            capture.bridge.syntheticMouseMoves++;
+            capture.bridge.correctionMouseMoves++;
           }
+        } catch (error) {
+          state.bridgeError = error?.message || String(error);
         }
+      }
 
-        // Repeated differences imply that this Chromium/platform combination
-        // does not pair raw and compatibility movement as expected. Revert to
-        // trusted native events for the remainder of this pointer lock.
-        if (consecutiveMovementMismatches >= 3) {
-          bridgeDisabledForLock = true;
-          rawActiveForLock = false;
-          if (capture) capture.bridge.disabledAfterMismatch = true;
-        }
+      // Repeated prompt differences imply that this platform does not pair raw
+      // and compatibility movement as expected. Fall back for this lock.
+      if (consecutiveMovementMismatches >= pollingProfile.mismatchLimit) {
+        bridgeDisabledForLock = true;
+        rawActiveForLock = false;
+        if (capture) capture.bridge.disabledAfterMismatch = true;
       }
       pendingRawX = 0;
       pendingRawY = 0;
       pendingRawEvents = 0;
+      pendingRawLastAt = 0;
       state.suppressedMouseMoves++;
       if (capture) capture.bridge.suppressedNativeMouseMoves++;
       if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
@@ -493,6 +566,7 @@ function installRawMouse(options = {}) {
         passedNativeMouseMoves: 0,
         movementMatches: 0,
         movementMismatches: 0,
+        lateReconciliations: 0,
         focusResets: 0,
         normalizedControlClicks: 0,
         disabledAfterMismatch: false,
@@ -551,7 +625,13 @@ function installRawMouse(options = {}) {
       rawPointerUpdate: summarizeCaptureStream(result.rawPointer),
       pointerMove: summarizeCaptureStream(result.pointerMove),
       nativeMouseMove: summarizeCaptureStream(result.nativeMouse),
-      bridge: result.bridge,
+      bridge: {
+        ...result.bridge,
+        pollingRateHz,
+        pollingIntervalMs: round(rawIntervalEwma, 3),
+        reconciliationWindowMs: pollingProfile.reconciliationWindowMs,
+        mismatchLimit: pollingProfile.mismatchLimit,
+      },
       inputAgeAtFrameMs: summarizeSeries(result.inputAgeAtFrameMs.subarray(0, result.inputAgeCount), 3),
       inputAgeSourceFrames: result.sourceFrames,
       overflowSamples: result.overflowSamples,
@@ -561,7 +641,7 @@ function installRawMouse(options = {}) {
 
   const getStats = () => {
     const timestamp = now();
-    const rawFresh = lastRawAt > 0 && timestamp - lastRawAt <= NATIVE_FALLBACK_MS;
+    const rawFresh = lastRawAt > 0 && timestamp - lastRawAt <= pollingProfile.reconciliationWindowMs;
     return {
       supported: state.supported,
       pointerLocked: isPointerLocked(),
@@ -579,6 +659,12 @@ function installRawMouse(options = {}) {
       passedNativeMouseMoves: state.passedNativeMouseMoves,
       movementMatches: state.movementMatches,
       movementMismatches: state.movementMismatches,
+      lateReconciliations: state.lateReconciliations,
+      pollingRateHz,
+      pollingIntervalMs: round(rawIntervalEwma, 3),
+      reconciliationWindowMs: pollingProfile.reconciliationWindowMs,
+      mismatchLimit: pollingProfile.mismatchLimit,
+      pollingProfileChanges: state.pollingProfileChanges,
       focusResets: state.focusResets,
       normalizedControlClicks: state.normalizedControlClicks,
       unadjusted: { ...state.unadjusted },
@@ -596,10 +682,20 @@ function installRawMouse(options = {}) {
     capture = null;
   };
 
-  return { supported: true, startCapture, finishCapture, sampleFrame, getStats, destroy };
+  return {
+    supported: true,
+    startCapture,
+    finishCapture,
+    sampleFrame,
+    getStats,
+    reset: () => resetBridgeState(true),
+    destroy,
+  };
 }
 
 module.exports = {
+  classifyPollingRate,
   installRawMouse,
+  pollingProfileForRate,
   summarizeCaptureStream,
 };

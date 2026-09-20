@@ -33,7 +33,11 @@ function sanitizeBlockRgbSettings() {
 sanitizeBlockRgbSettings();
 
 const { summarizeFrameTimes } = require("../util/perf-metrics");
+const { createAdaptiveInterpolation } = require("./game/adaptive-interpolation");
+const { NumericMatrixDeduper, scaleSignatureKey } = require("./game/matrix-fingerprint");
 const { installRawMouse } = require("./game/raw-mouse");
+const { prewarmWebGLContext } = require("./game/shader-prewarm");
+const { createSimulationClock } = require("./game/simulation-clock");
 
 // Frame telemetry is demand-driven. The old sampler ran a second rAF loop for
 // the entire lifetime of the client and shifted an Array every frame, even
@@ -218,6 +222,9 @@ const _finishBenchmarkCapture = () => {
       endMb: heapEndMb === null ? null : +heapEndMb.toFixed(2),
     },
     mouseInput,
+    simulation: window.__dawnSimulationClock?.getStats() ?? null,
+    interpolation: window.__dawnInterpolation?.getStats() ?? null,
+    shaderPrewarm: window.__dawnShaderPrewarm ?? null,
     visibilityState: document.visibilityState,
   };
 };
@@ -294,18 +301,25 @@ function toggleFrameTimeLogger() {
     ];
     if (tickSamples.length) {
       const avgDt = tickSamples.reduce((sum, value) => sum + value, 0) / tickSamples.length;
-      lines.push(`Logic Tick ~${Math.round(1 / avgDt)}Hz  (mul x${tickMul})`);
+      const simulation = window.__dawnSimulationClock?.getStats();
+      const pacing = simulation?.mode || "legacy";
+      lines.push(`Logic Tick ~${Math.round(1 / avgDt)}Hz  (mul x${tickMul}, ${pacing})`);
+      if (simulation) {
+        lines.push(`Sim steps ${simulation.lastSteps}  display ${simulation.displayHz}Hz  dropped debt ${simulation.droppedDebtMs}ms`);
+      }
     }
     const snapshots = Number(window.__dawnInterpSnapshots);
     const targetMs = Number(window.__dawnInterpDelayMs) || 75;
     if (Number.isFinite(snapshots)) {
-      lines.push(`Interp ${snapshots} snapshots  (~${snapshots * 33}ms, target ${targetMs}ms)`);
+      const interpolation = window.__dawnInterpolation?.getStats();
+      const adaptive = interpolation?.enabled ? `adaptive +${interpolation.extraSnapshots}, jitter ${interpolation.p95JitterMs}ms` : "manual";
+      lines.push(`Interp ${snapshots} snapshots  (~${snapshots * 33}ms, target ${targetMs}ms, ${adaptive})`);
     }
     const mouse = window.__dawnMouseInput?.getStats();
     if (mouse?.pointerLocked) {
       const bridge = !mouse.supported ? "unsupported" : mouse.bridgeActive ? "active" : mouse.highRateEnabled ? "armed" : "off";
       lines.push(`Mouse raw ${mouse.rawHz || 0}Hz  native ${mouse.nativeMouseHz || 0}Hz  bridge ${bridge}`);
-      lines.push(`Mouse acceleration ${mouse.unadjustedEnabled ? mouse.unadjusted.status : "OS-adjusted"}`);
+      lines.push(`Mouse profile ${mouse.pollingRateHz || 0}Hz / ${mouse.reconciliationWindowMs || 0}ms  acceleration ${mouse.unadjustedEnabled ? mouse.unadjusted.status : "OS-adjusted"}`);
     }
     _frameTimeOverlay.textContent = lines.join("\n");
   };
@@ -339,7 +353,18 @@ const settings = ipcRenderer.sendSync("get-settings");
 // Keep this in-process copy live — main broadcasts the full settings
 // object on every change. Reading from it avoids a blocking sendSync
 // round-trip on every call (several pollers paid one per second).
-ipcRenderer.on("settings-updated", (s) => { if (s) Object.assign(settings, s); });
+const applyTimingSettings = (updated = settings) => {
+  window.__dawnTickMul = Math.max(1, Number(updated.logic_tick_rate) / 60) || 1;
+  window.__dawnInterpDelayMs = Number(updated.interp_delay_ms) || 75;
+  window.__dawnFixedStep = updated.fixed_step_simulation !== false;
+  window.__dawnAdaptiveInterp = updated.adaptive_interpolation !== false;
+  window.__dawnSyncSimulationPhaseTracker?.();
+};
+ipcRenderer.on("settings-updated", (_event, updated) => {
+  if (!updated) return;
+  Object.assign(settings, updated);
+  applyTimingSettings(settings);
+});
 
 // Install before the page bundle executes so its mousemove listener receives
 // device-rate pointer deltas. Both modes read the live settings object: the
@@ -351,11 +376,64 @@ try {
   console.warn("[dawn-input] high-rate mouse install failed; using native input", error);
 }
 
-  // Boot-time value for the patched game loop (logic tick overclock).
-  window.__dawnTickMul = Math.max(1, Number(settings.logic_tick_rate) / 60) || 1;
-  // Boot-time value for interpolation delay slider (ms).
-  window.__dawnInterpDelayMs = Number(settings.interp_delay_ms) || 75;
-  const base_url = settings.base_url;
+// The patched bundle calls this clock for overclocked fixed simulation slices.
+// At 60 Hz it preserves the stock single variable update; over 60 Hz it uses a
+// bounded accumulator and the active display cadence supplied by main.
+window.__dawnDisplayHz = 60;
+window.__dawnSimulationClock = createSimulationClock({ scope: window });
+window.__dawnInterpolation = createAdaptiveInterpolation({
+  enabled: () => window.__dawnAdaptiveInterp !== false,
+});
+applyTimingSettings(settings);
+
+let simulationPhaseRAF = null;
+const simulationPhaseLoop = (timestamp) => {
+  window.__dawnSimulationClock?.observePresentation(timestamp);
+  if (window.__dawnFixedStep !== false && (window.__dawnTickMul || 1) > 1) {
+    simulationPhaseRAF = requestAnimationFrame(simulationPhaseLoop);
+  } else {
+    simulationPhaseRAF = null;
+  }
+};
+const syncSimulationPhaseTracker = () => {
+  const onGameOrigin = window.location.href.startsWith(settings.base_url || "https://kirka.io/");
+  const needed = onGameOrigin && window.__dawnFixedStep !== false && (window.__dawnTickMul || 1) > 1;
+  if (needed && simulationPhaseRAF === null) {
+    simulationPhaseRAF = requestAnimationFrame(simulationPhaseLoop);
+  } else if (!needed && simulationPhaseRAF !== null) {
+    cancelAnimationFrame(simulationPhaseRAF);
+    simulationPhaseRAF = null;
+  }
+};
+window.__dawnSyncSimulationPhaseTracker = syncSimulationPhaseTracker;
+syncSimulationPhaseTracker();
+
+let lastRuntimeResetAt = -Infinity;
+const resetRuntimeTiming = () => {
+  const timestamp = performance.now();
+  if (timestamp - lastRuntimeResetAt < 16) return;
+  lastRuntimeResetAt = timestamp;
+  window.__lastMainDelta = timestamp;
+  window.__dawnSimulationClock?.reset(timestamp);
+  window.__dawnInterpolation?.reset();
+  window.__dawnMouseInput?.reset?.();
+  if (Array.isArray(window.__dawnTickSamples)) window.__dawnTickSamples.length = 0;
+  _telemetryLastT = _telemetryConsumers.size ? timestamp : 0;
+  window.dispatchEvent(new CustomEvent("dawn-runtime-resume"));
+};
+
+ipcRenderer.on("display-profile", (_event, profile) => {
+  const hz = Number(profile?.refreshHz);
+  if (Number.isFinite(hz) && hz >= 30) window.__dawnDisplayHz = hz;
+  window.__dawnSimulationClock?.reset(performance.now());
+});
+ipcRenderer.on("dawn-focus-reset", resetRuntimeTiming);
+window.addEventListener("focus", resetRuntimeTiming, true);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") resetRuntimeTiming();
+}, true);
+
+const base_url = settings.base_url;
 
 if (!window.location.href.startsWith(base_url)) {
   delete window.process;
@@ -1365,34 +1443,28 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     let inspectStart = null;
     let inspectingWeaponId = null;
+    window.addEventListener("dawn-runtime-resume", () => {
+      inspectStart = null;
+      inspectingWeaponId = null;
+      syncWeaponFrameTicker();
+    });
 
-    const armSigs = new Set([
-      "1.40,1.40,1.40",
-      "1.99,1.68,2.11",
-      "1.88,1.40,1.88",
-      "1.11,1.11,1.77",
-      "1.50,1.40,1.76",
-      "1.13,0.85,1.77",
-      "0.81,1.08,1.38",
-      "1.52,1.15,1.61",
-      "1.16,1.48,0.94",
-      "1.08,1.10,1.77",
-      "1.54,0.92,2.24",
+    const signature = (x, y, z) => scaleSignatureKey(x, y, z);
+    const tomahawkCollisionSig = signature(1.54, 0.92, 2.24);
+    const symmetricArmSig = signature(1.4, 1.4, 1.4);
+    const armSigToType = new Map([
+      [symmetricArmSig, "right"],
+      [signature(1.99, 1.68, 2.11), "left"],
+      [signature(1.88, 1.4, 1.88), "left"],
+      [signature(1.11, 1.11, 1.77), "right"],
+      [signature(1.5, 1.4, 1.76), "right"],
+      [signature(1.13, 0.85, 1.77), "left"],
+      [signature(0.81, 1.08, 1.38), "left"],
+      [signature(1.52, 1.15, 1.61), "right"],
+      [signature(1.16, 1.48, 0.94), "right"],
+      [signature(1.08, 1.1, 1.77), "left"],
+      [tomahawkCollisionSig, "right"],
     ]);
-
-    const armSigToType = {
-      "1.40,1.40,1.40": "right",
-      "1.99,1.68,2.11": "left",
-      "1.11,1.11,1.77": "right",
-      "1.50,1.40,1.76": "right",
-      "1.13,0.85,1.77": "left",
-      "0.81,1.08,1.38": "left",
-      "1.52,1.15,1.61": "right",
-      "1.16,1.48,0.94": "right",
-      "1.54,0.92,2.24": "right",
-      "1.08,1.10,1.77": "left",
-      "1.88,1.40,1.88": "left",
-    };
 
     const getWeaponSetting = (weaponId, name, def) => readNumber(`${weaponId}_weapon_${name}`, def);
 
@@ -1987,6 +2059,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       hookedContexts.add(ctx);
 
       const gl = ctx;
+      if (!window.__dawnShaderPrewarm) {
+        window.__dawnShaderPrewarm = prewarmWebGLContext(gl, type === "webgl2");
+      }
       const matBuf = new Float32Array(16);
       const rgbPixel = new Uint8Array([255, 255, 255, 255]);
 
@@ -2003,8 +2078,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       const origBindTexture = gl.bindTexture.bind(gl);
 
       let activeThisFrame = false;
-      let seenMatricesThisFrame = new Set();
-      let lastFrameTime = -1;
+      const seenMatricesThisFrame = new NumericMatrixDeduper();
+      let lastMatrixFrameId = -1;
       let tomahawkSigCount = 0;
       let lastTomahawkFrameId = -1;
       let lastClearMask = 0;
@@ -2028,16 +2103,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       gl.uniformMatrix4fv = (location, transpose, data, srcOffset, srcLength) => {
         activeThisFrame = false;
 
-        // With stock weapon/arm settings, avoid all signature strings, matrix
-        // copies, square roots, and texture checks on this WebGL hot path.
+        // With stock weapon/arm settings, avoid all numeric fingerprinting,
+        // matrix copies, square roots, and texture checks on this WebGL path.
         if (!weaponCustomizationActive && inspectStart === null) {
           return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
         }
 
-        const now = performance.now();
-        if (now !== lastFrameTime) {
+        if (globalFrameId !== lastMatrixFrameId) {
           seenMatricesThisFrame.clear();
-          lastFrameTime = now;
+          lastMatrixFrameId = globalFrameId;
         }
 
         if (globalFrameId !== lastTomahawkFrameId) {
@@ -2056,15 +2130,15 @@ window.addEventListener("DOMContentLoaded", async () => {
           const s0 = colMag(slice, 0),
             s1 = colMag(slice, 4),
             s2 = colMag(slice, 8);
-          const sig = `${s0.toFixed(2)},${s1.toFixed(2)},${s2.toFixed(2)}`;
+          const sig = scaleSignatureKey(s0, s1, s2);
 
-          const isCollidingSig = sig === "1.54,0.92,2.24";
+          const isCollidingSig = sig === tomahawkCollisionSig;
           let treatAsArm;
           if (isCollidingSig) {
             tomahawkSigCount++;
             treatAsArm = tomahawkSigCount > 1;
           } else {
-            treatAsArm = armSigs.has(sig);
+            treatAsArm = armSigToType.has(sig);
           }
 
           if (!treatAsArm) {
@@ -2072,11 +2146,9 @@ window.addEventListener("DOMContentLoaded", async () => {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
-            const fp = `${slice[0].toFixed(3)},${slice[5].toFixed(3)},${slice[10].toFixed(3)},${slice[12].toFixed(4)},${slice[13].toFixed(4)},${slice[14].toFixed(4)}`;
-            if (seenMatricesThisFrame.has(fp)) {
+            if (seenMatricesThisFrame.seen(slice)) {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
-            seenMatricesThisFrame.add(fp);
 
             const currentWeaponId = domWeaponId;
             window.currentWeaponId = currentWeaponId;
@@ -2190,16 +2262,14 @@ window.addEventListener("DOMContentLoaded", async () => {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
-            const fp = `${slice[0].toFixed(3)},${slice[5].toFixed(3)},${slice[10].toFixed(3)},${slice[12].toFixed(4)},${slice[13].toFixed(4)},${slice[14].toFixed(4)}`;
-            if (seenMatricesThisFrame.has(fp)) {
+            if (seenMatricesThisFrame.seen(slice)) {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
-            seenMatricesThisFrame.add(fp);
 
             const currentWeaponId = domWeaponId || "vita";
 
-            let armType = armSigToType[sig] || "left";
-            if (sig === "1.40,1.40,1.40" && currentWeaponId === "tomahawk") {
+            let armType = armSigToType.get(sig) || "left";
+            if (sig === symmetricArmSig && currentWeaponId === "tomahawk") {
               armType = slice[12] > 0 ? "right" : "left";
             }
 
@@ -3662,9 +3732,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   observeForElement("#profile-modal-modal", handleProfile);
 
+  let cleanupInGameChat = () => {};
   const handleInGame = () => {
     const gameInterface = document.querySelector(".desktop-game-interface");
     if (!gameInterface || gameInterface.dataset.dawnInitialized === "true") return;
+    cleanupInGameChat();
     // SPA URL events can fire repeatedly for one match. Mark the actual game
     // interface node so we do not stack duplicate observers and key listeners.
     // A new match gets a new node and initializes normally.
@@ -3847,8 +3919,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     const checkLatestMessageForReset = (container) => {
-      const messages = container.querySelectorAll(".message");
-      const last = messages[messages.length - 1];
+      const tail = container.lastElementChild;
+      const last = tail?.classList?.contains("message")
+        ? tail
+        : container.querySelector(".message:last-of-type");
       if (!last) return;
 
       const body = last.querySelector(".text");
@@ -3866,6 +3940,94 @@ window.addEventListener("DOMContentLoaded", async () => {
         renderHeadshots();
       }
     };
+
+    // One route-scoped observer handles every message/text mutation. The old
+    // implementation created up to two observers per message and never kept a
+    // reference to the container observer, so chat-heavy matches accumulated
+    // callbacks that could not be disconnected.
+    const observedChatContainers = new Set();
+    const pendingChatMessages = new Set();
+    let chatFlushQueued = false;
+    let chatMountObserver = null;
+    let chatRouteListener = null;
+
+    const flushChatMessages = () => {
+      chatFlushQueued = false;
+      if (!gameInterface.isConnected) {
+        cleanupInGameChat();
+        return;
+      }
+      if (settings.customizations) {
+        for (const message of pendingChatMessages) {
+          if (message.isConnected) processMessage(message);
+        }
+      }
+      pendingChatMessages.clear();
+      for (const container of observedChatContainers) {
+        if (container.isConnected) checkLatestMessageForReset(container);
+      }
+    };
+
+    const queueChatMessage = (message) => {
+      if (!message || !message.classList?.contains("message")) return;
+      pendingChatMessages.add(message);
+      if (!chatFlushQueued) {
+        chatFlushQueued = true;
+        queueMicrotask(flushChatMessages);
+      }
+    };
+
+    const messageFromNode = (node) => {
+      const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+      return element?.closest?.(".message") || null;
+    };
+
+    const chatObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        queueChatMessage(messageFromNode(mutation.target));
+        for (const node of mutation.addedNodes || []) {
+          if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains("message")) {
+            queueChatMessage(node);
+          }
+          node.querySelectorAll?.(".message").forEach(queueChatMessage);
+        }
+      }
+    });
+
+    const observeChatContainer = (container) => {
+      if (!container || observedChatContainers.has(container)) return;
+      observedChatContainers.add(container);
+      chatObserver.observe(container, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+      container.querySelectorAll(".message").forEach(queueChatMessage);
+    };
+
+    const disconnectChatObservers = () => {
+      chatObserver.disconnect();
+      chatMountObserver?.disconnect();
+      observedChatContainers.clear();
+      pendingChatMessages.clear();
+      chatFlushQueued = false;
+      if (chatRouteListener) window.removeEventListener("url-changed", chatRouteListener);
+      if (cleanupInGameChat === disconnectChatObservers) cleanupInGameChat = () => {};
+    };
+    cleanupInGameChat = disconnectChatObservers;
+    chatRouteListener = ({ detail }) => {
+      try {
+        const pathname = new URL(detail, base_url).pathname;
+        if (!pathname.startsWith("/games") && !pathname.startsWith("/hub/ranked")) {
+          disconnectChatObservers();
+        }
+      } catch (error) {
+        disconnectChatObservers();
+      }
+    };
+    window.addEventListener("url-changed", chatRouteListener);
 
     const updateMessages = () => {
       document.querySelectorAll(".desktop-game-interface .messages-cont .message").forEach(processMessage);
@@ -3895,50 +4057,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         });
 
         const chatCont = document.querySelector(".end-modal .messages-cont");
-        if (chatCont) {
-          const observedEndMessages = new WeakSet();
-
-          const observeEndMessage = (message) => {
-            if (observedEndMessages.has(message)) {
-              processMessage(message);
-              return;
-            }
-            observedEndMessages.add(message);
-
-            new MutationObserver(() => {
-              if (!settings.customizations) return;
-              processMessage(message);
-            }).observe(message, { childList: true });
-
-            const body = message.querySelector(".text");
-            if (body) {
-              new MutationObserver(() => {
-                if (!settings.customizations) return;
-                processMessage(message);
-              }).observe(body, {
-                attributes: true,
-                attributeFilter: ["class"],
-                childList: true,
-                characterData: true,
-                subtree: true,
-              });
-            }
-
-            processMessage(message);
-          };
-
-          chatCont.querySelectorAll(".message").forEach(observeEndMessage);
-
-          new MutationObserver((mutations) => {
-            if (!settings.customizations) return;
-            for (const mutation of mutations) {
-              mutation.addedNodes.forEach((node) => {
-                if (node.nodeType !== Node.ELEMENT_NODE || !node.classList.contains("message")) return;
-                observeEndMessage(node);
-              });
-            }
-          }).observe(chatCont, { childList: true });
-        }
+        if (chatCont) observeChatContainer(chatCont);
       } finally {
         updatingEndModal = false;
       }
@@ -4705,72 +4824,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     observeForElement(".death-cont .user-card", updateDeathCont);
     observeForElement(".end-modal", updateEndModal, document.querySelector("#app"));
 
-    let chatObserver = null;
-    let chatObserverAttached = false;
-
     const attachChatObserver = () => {
-      if (chatObserverAttached) return;
-      const chatCont = document.querySelector(".desktop-game-interface .messages-cont");
-      if (!chatCont) return;
-      chatObserverAttached = true;
-
-      const observedMessages = new WeakSet();
-
-      const observeMessage = (message) => {
-        if (observedMessages.has(message)) {
-          processMessage(message);
-          checkLatestMessageForReset(chatCont);
-          return;
-        }
-        observedMessages.add(message);
-
-        new MutationObserver(() => {
-          if (settings.customizations) processMessage(message);
-          checkLatestMessageForReset(chatCont);
-        }).observe(message, { childList: true });
-
-        const body = message.querySelector(".text");
-        if (body) {
-          new MutationObserver(() => {
-            if (settings.customizations) processMessage(message);
-            checkLatestMessageForReset(chatCont);
-          }).observe(body, {
-            attributes: true,
-            attributeFilter: ["class"],
-            childList: true,
-            characterData: true,
-            subtree: true,
-          });
-        }
-
-        processMessage(message);
-      };
-
-      chatCont.querySelectorAll(".message").forEach(observeMessage);
-
-      new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          mutation.addedNodes.forEach((node) => {
-            if (node.nodeType !== Node.ELEMENT_NODE || !node.classList.contains("message")) return;
-            observeMessage(node);
-          });
-        }
-        checkLatestMessageForReset(chatCont);
-      }).observe(chatCont, { childList: true });
+      observeChatContainer(document.querySelector(".desktop-game-interface .messages-cont"));
     };
 
     const bottomLeft = document.querySelector("#bottom-left");
     if (bottomLeft) {
-      new MutationObserver(() => {
-        const chatCont = document.querySelector(".desktop-game-interface .messages-cont");
-        if (chatCont) {
-          attachChatObserver();
-        } else {
-          chatObserverAttached = false;
-          chatObserver?.disconnect();
-          chatObserver = null;
-        }
-      }).observe(bottomLeft, { childList: true });
+      chatMountObserver = new MutationObserver(attachChatObserver);
+      chatMountObserver.observe(bottomLeft, { childList: true });
     }
 
     const observeElement = (selector, setting, execute) => {
@@ -6369,11 +6430,25 @@ window.addEventListener("DOMContentLoaded", async () => {
       case "logic_tick_rate":
         // Read by the dawn-patched game loop on every re-schedule (live).
         window.__dawnTickMul = Math.max(1, Number(value) / 60) || 1;
+        syncSimulationPhaseTracker();
+        window.__dawnSimulationClock?.reset(performance.now());
+        break;
+
+      case "fixed_step_simulation":
+        window.__dawnFixedStep = value !== false;
+        syncSimulationPhaseTracker();
+        window.__dawnSimulationClock?.reset(performance.now());
+        break;
+
+      case "adaptive_interpolation":
+        window.__dawnAdaptiveInterp = value !== false;
+        window.__dawnInterpolation?.reset();
         break;
 
       case "interp_delay_ms":
         // Read by the dawn-patched remote playback system (live).
         window.__dawnInterpDelayMs = Number(value) || 75;
+        window.__dawnInterpolation?.reset();
         break;
 
       case "lobby_ping":
@@ -6410,6 +6485,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     console.info = originalConsole.info;
     console.trace = originalConsole.trace;
 
+    if (window._currentUrl && window._currentUrl !== url) {
+      const timestamp = performance.now();
+      window.__dawnSimulationClock?.reset(timestamp);
+      window.__dawnInterpolation?.reset();
+      window.__dawnMouseInput?.reset?.();
+    }
     window._currentUrl = url;
 
     if (url === `${base_url}`) {

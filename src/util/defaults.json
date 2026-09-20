@@ -118,6 +118,8 @@
     "num_raster_threads": 4,
     "performance_mode": true,
     "logic_tick_rate": "60",
+    "fixed_step_simulation": true,
+    "adaptive_interpolation": true,
     "high_rate_mouse": true,
     "raw_mouse_input": false,
     "engine_profile": "stock",
