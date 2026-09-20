@@ -11,6 +11,20 @@ WebGL hook, WASM, addons, menu, memory, Chromium switches, packaging.
 > Remaining: P1-3 (settings debounce), P1-4 (CSS passes), P1-5 (warm-start index
 > cache), P2 items.
 
+> **Measurement update (2026-09-20):** Performance → Repeatable Benchmark now runs a
+> fixed 3s warm-up + 30s capture and writes JSON reports under
+> `Documents/DawnClient/performance-reports`. Reports include p95/p99 frame time, 1% and
+> 0.1% lows, long tasks, CPU, renderer/GPU process memory, and startup/navigation timing.
+> Use the same map, route, settings, and player count when comparing runs.
+>
+> **Loop/observer audit update:** normal gameplay no longer carries a telemetry rAF or
+> 2-second main-process telemetry round-trip. The synthetic-key failsafe, profile/lobby
+> waits, warm-up transition, friends refresh, and menu/custom-script observers are now
+> demand-, mutation-, or route-driven. Remaining intervals are intentional and scoped:
+> lobby ping (5s, lobby only), thermal guard (10s), memory guard (30s), F9 overlay (4Hz
+> only while visible), benchmark samplers (only for a run), and user-triggered opener
+> animations/actions.
+
 > ⚠️ **Docs drift:** `input-latency-report.md`, `electron-upgrade-report.md` and
 > `renderer-pipeline-report.md` describe **Electron 12.2.3** (Chrome 89). The client has
 > since moved to **Electron 32.2.0** and already implements the bulk of their
@@ -22,6 +36,27 @@ WebGL hook, WASM, addons, menu, memory, Chromium switches, packaging.
 
 ---
 
+## Next measured targets (2026-09-20)
+
+1. **Collapse per-message observers into one chat-container observer.** In-match chat can
+   currently create observers for both each message node and its `.text` child. Process
+   only added/changed messages from the container and disconnect on route exit. Compare
+   p99 frame time and long-task count in a chat-heavy 30s run.
+2. **Replace WebGL string fingerprints with numeric keys.** When weapon customization is
+   active, matrix signatures still call `toFixed()` and build strings inside
+   `uniformMatrix4fv`. Quantized integer hashes (or cached uniform/program identities)
+   should cut allocation and GC pressure. Compare stock, static color, and rainbow runs.
+3. **Persist the last bundle URL/index metadata.** Warm starts still fetch the index to
+   discover the hashed bundle. Load the versioned disk bundle immediately, revalidate the
+   index in the background, and compare app-start-to-load plus page `loadEvent` timing.
+4. **Validate the FPS-cap path against presented frames.** Electron 32 documents
+   `webContents.setFrameRate()` for offscreen rendering, while this window is onscreen.
+   Measure whether it changes rAF/presentation cadence; if not, move capping into the
+   patched game loop or a proven compositor path before promising that setting to users.
+5. **Add last-run deltas in the Performance panel.** Compare the same scenario's p99,
+   1% low, CPU, and memory peak/delta against the previous JSON report, and flag invalid
+   comparisons when route, refresh rate, profile, or core settings differ.
+
 ## 0. Scorecard — what's already good
 
 | Area | Status | Evidence |
@@ -29,14 +64,14 @@ WebGL hook, WASM, addons, menu, memory, Chromium switches, packaging.
 | Startup | ✅ | Splash window paints ~50ms; game window loads immediately; bundle cache warmed **in parallel** (never gates startup) |
 | Bundle cache | ✅ | Versioned keys (`.p2`), atomic tmp+rename writes, startup prune, in-flight fetch dedupe, `AbortSignal.timeout(15s)` |
 | Patch registry | ✅ | Needle→replacement array with per-patch applied/missing status, `__patchMeta` appended |
-| FPS cap | ✅ | `webContents.setFrameRate()` 30–240, live-updates on setting change |
+| FPS cap | ⚠️ | Setting is wired live, but Electron 32 documents `webContents.setFrameRate()` for offscreen rendering; verify presented cadence on this onscreen window |
 | Input latency | ✅ | bhop keys batched per frame → `sendInputEvent` (fastest Electron path, no CDP) |
 | Backgrounding | ✅ | `backgroundThrottling:false`, `disable-background-timer-throttling`, `disable-renderer-backgrounding`, `disable-backgrounding-occluded-windows` |
 | Feature disables | ✅ | `CalculateNativeWinOcclusion`, `PaintHolding`, `IntensiveWakeUpThrottling`, `BackForwardCache`, `Translate`, `MediaRouter` all off |
 | GPU crash recovery | ✅ | `child-process-gone` → reload; renderer `render-process-gone` → reload; `unresponsive` → reload |
-| Renderer memory | ✅ | RSS watchdog (soft 2GB → GC, hard 3.5GB → reload outside match) + `--expose-gc` |
+| Renderer memory | ✅ | Electron `ProcessMetric` watchdog in KiB (soft 2GB → GC, hard 3.5GB → reload outside match), GPU-process check, and `--expose-gc` |
 | Process priority | ✅ | `os.setPriority(-10)` on main + renderer, App Nap + sudden termination disabled |
-| WebGL hook | ✅ | Lazily installed only when weapon mods enabled; WASM sig matching + bloom-filter dedup; `desynchronized:true` canvas |
+| WebGL hook | ✅ | Stock-settings fast return; demand-driven frame ticker; cached 1×1 color uploads; `desynchronized:true` canvas |
 | Custom Skin Link | ✅ | WeakMap bookkeeping (no leak), throttled re-patch (250ms), forced re-upload after decode, cached in-game check (500ms) |
 | Menu | ✅ | Injected once from disk via nav-cache, `display:none` when closed (no paint cost), lazy `loading` on remote images |
 | JS engine | ✅ | `--max-old-space-size=4096 --max-semi-space-size=128 --sparkplug --turbo-fast-api-calls --expose-gc`, `v8-cache-options code` |
@@ -93,41 +128,30 @@ watchdog 1.5s, Escape/blur resets. ✅
 
 **Observations (non-blocking):**
 - `_readKeys()` runs on every keydown — trivial.
-- The `setInterval(500ms)` synthetic-key watchdog wakes the main process every 500ms even
-  when idle — negligible, but could be `setTimeout` re-armed on key press for a fully idle
-  main loop.
+- The synthetic-key watchdog is now a demand-driven `setTimeout`, re-armed only while a
+  synthetic key is held; the main process has no idle 500ms wake-up.
 - Renderer bhop loop only runs while Shift held ✅.
 
-### 1.4 WebGL weapon hook — GOOD, feature-gated
+### 1.4 WebGL weapon hook — GOOD, fast default path
 
-`getContext` wrapper installs the heavy `uniformMatrix4fv` wrapper **only** when weapon
-mods are enabled (`_needsModProcessing()`), so default config has ~zero hook cost. When
-enabled: bloom filter avoids repeat WASM `parse_sig` per identical matrix per draw-call
-batch; scratch buffer lives in WASM memory (zero-copy); rgb re-upload throttled to every
-3rd frame; hex parse cached. ✅
+The game canvas keeps an installed `uniformMatrix4fv` wrapper so weapon settings can be
+changed live, but stock settings now take one cached-boolean branch straight to the
+original call. Matrix signatures/copies, magnitudes, texture work, and the hook's frame
+counter are dormant until customization or inspect animation is active. Static 1×1 color
+textures upload only when RGB actually changes, and zero rotations skip trigonometric
+matrix work. ✅
 
-**Observation:** the `getContext` monkeypatch itself runs on every canvas in the page —
-it's a cheap `id/width/height` check, fine.
+**Remaining enabled-mode cost:** weapon/arm detection still creates `toFixed()` signature
+and fingerprint strings in the uniform hot path; replace these with numeric hashes and
+verify with the benchmark before/after.
 
-### 1.5 Custom Skin Link — GOOD logic, ONE hot-path issue (P1)
+### 1.5 Custom Skin Link — GOOD, feature-gated
 
-The `Array.isArray` monkeypatch **replaces the global builtin for the entire game**:
-
-```js
-Array.isArray = function(arg) {
-  if (!arg || !arg.map || !arg.map.image) return oldIsArr.call(Array, arg);
-  ...
-```
-
-Three.js and the game call `Array.isArray` extremely often (every material, attribute,
-buffer check). Even the fast path adds a JS call + two property lookups on every single
-invocation — **and it stays installed even when the skin link feature is disabled.**
-This is the single biggest hot-path overhead in the client.
-
-**Fix (P1):** install the patch only while `localStorage.csl_enabled === "true"`;
-restore the original otherwise. Listen to `storage`/`change` on the csl checkbox to
-install/uninstall live. Saves a measurable fraction of a frame on all users who never
-touch the feature.
+Three.js and the game call `Array.isArray` extremely often. The skin-link wrapper adds a
+JS call and property checks to that global hot path, so it is now installed only while
+`localStorage.csl_enabled === "true"` and the native function is restored when disabled.
+Users with the feature off pay no wrapper cost. When enabled, use the benchmark to decide
+whether texture detection should move to a narrower upload/material hook.
 
 ### 1.6 Menu & CSS — GOOD, minor polish
 
@@ -144,12 +168,13 @@ touch the feature.
 
 ### 1.7 Memory & GC — GOOD
 
-Watchdog every 30s via `getProcessMemoryInfo` (RSS), GC nudge >2GB, reload >3.5GB outside
-match; `matchEnded` forces GC + logs heap. `_forceGC` uses `--expose-gc` ✅.
-
-**Gap (P2):** watchdog tracks only the **renderer** RSS. The **GPU process** (`app.getAppMetrics()`
-→ `gpu` pid) can also leak textures over long sessions. Add a GPU-process RSS check to the
-same timer.
+The 30s watchdog resolves renderer and GPU `ProcessMetric`s via `app.getAppMetrics()`.
+Electron reports these values in KiB; the thresholds and display conversion now use the
+same unit. It nudges GC above 2GB and reloads above 3.5GB (renderer) or 2.5GB (GPU), only
+outside a match. `matchEnded` also forces GC + logs heap; `_forceGC` uses `--expose-gc` ✅.
+The previous `webContents.getProcessMemoryInfo()` call is not an Electron 32 API and the
+old byte-sized thresholds were 1024× too high, so that watchdog had effectively been
+inactive.
 
 ### 1.8 Settings — dead options (P0 cleanup)
 

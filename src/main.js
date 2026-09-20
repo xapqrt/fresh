@@ -1,21 +1,37 @@
+// Capture startup before loading Electron integrations and native modules.
+const _mainStartedAt = Date.now();
+
 const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net, screen } = require("electron");
 const { applySwitches } = require("./util/switches");
 const { default_settings, allowed_urls } = require("./util/defaults.json");
-const { registerShortcuts } = require("./util/shortcuts");
-const DiscordRPC = require("./addons/rpc");
 const path = require("path");
 const os = require("os");
 const Store = require("electron-store");
 const fs = require("fs");
-const ffmpeg = require("fluent-ffmpeg");
-let ffmpegPath = require("ffmpeg-static");
+const { summarizeSeries, round } = require("./util/perf-metrics");
 
-if (ffmpegPath && ffmpegPath.includes("app.asar")) {
-  ffmpegPath = ffmpegPath.replace("app.asar", "app.asar.unpacked");
-}
-if (ffmpegPath) {
-  ffmpeg.setFfmpegPath(ffmpegPath);
-}
+const _startupMetrics = {};
+const _perf = (label) => {
+  const elapsedMs = Date.now() - _mainStartedAt;
+  _startupMetrics[label] = elapsedMs;
+  console.log(`[perf] ${label} +${elapsedMs}ms`);
+  return elapsedMs;
+};
+
+// Sound conversion is rarely used; loading fluent-ffmpeg and resolving its
+// native binary on every launch only extends the critical startup path.
+let ffmpegFactory = null;
+let ffmpegPath = null;
+const getFfmpeg = () => {
+  if (ffmpegFactory) return ffmpegFactory;
+  ffmpegFactory = require("fluent-ffmpeg");
+  ffmpegPath = require("ffmpeg-static");
+  if (ffmpegPath && ffmpegPath.includes("app.asar")) {
+    ffmpegPath = ffmpegPath.replace("app.asar", "app.asar.unpacked");
+  }
+  if (ffmpegPath) ffmpegFactory.setFfmpegPath(ffmpegPath);
+  return ffmpegFactory;
+};
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "dawn-patch", privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, standard: true, corsEnabled: true } },
@@ -29,18 +45,23 @@ if (!store.has("settings")) {
   store.set("settings", default_settings);
 }
 let settings = store.get("settings");
+let startupSettingsChanged = false;
 for (const key in default_settings) {
   if (!(key in settings) || typeof settings[key] !== typeof default_settings[key]) {
     settings[key] = default_settings[key];
+    startupSettingsChanged = true;
   }
 }
 if (!settings.menu_opacity || Number(settings.menu_opacity) <= 0) {
   settings.menu_opacity = 100;
+  startupSettingsChanged = true;
 }
 if (settings.advanced_css && (settings.advanced_css.includes("263f8a2cbfc9d6e90f37e32f88d3265d") || settings.advanced_css.includes("rick and morty"))) {
   settings.advanced_css = "";
+  startupSettingsChanged = true;
 }
-store.set("settings", settings);
+// Avoid rewriting the complete settings JSON on every normal launch.
+if (startupSettingsChanged) store.set("settings", settings);
 
 let gameWindow = null;
 let splashWindow = null;
@@ -72,10 +93,15 @@ let _failLoadAttempt = 0;
 
 // ── Synthetic key tracking ────────────────────────────────────────────────
 const _syntheticKeys = new Set();
-let _lastBhopFlush = 0;
+let _bhopStaleTimer = null;
 
 function releaseSyntheticKeys() {
-  if (!gameWindow || gameWindow.isDestroyed()) return;
+  clearTimeout(_bhopStaleTimer);
+  _bhopStaleTimer = null;
+  if (!gameWindow || gameWindow.isDestroyed()) {
+    _syntheticKeys.clear();
+    return;
+  }
   for (const key of _syntheticKeys) {
     try {
       gameWindow.webContents.sendInputEvent({
@@ -87,13 +113,14 @@ function releaseSyntheticKeys() {
   _syntheticKeys.clear();
 }
 
-setInterval(() => {
-  if (_syntheticKeys.size === 0) { _lastBhopFlush = 0; return; }
-  if (_lastBhopFlush !== 0 && Date.now() - _lastBhopFlush > 1500) {
-    releaseSyntheticKeys();
-    _lastBhopFlush = 0;
+const armSyntheticKeyFailsafe = () => {
+  clearTimeout(_bhopStaleTimer);
+  if (!_syntheticKeys.size) {
+    _bhopStaleTimer = null;
+    return;
   }
-}, 500);
+  _bhopStaleTimer = setTimeout(releaseSyntheticKeys, 1500);
+};
 
 // ── IPC Handlers (must be registered before any window loads) ──────────────────
 ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
@@ -111,7 +138,7 @@ const applyFrameCap = () => {
   const cap = Number(settings.fps_cap) || 0;
   if (cap === 0) return;
   try {
-    const displayHz = Math.round(screen.getPrimaryDisplay().refreshRate) || 60;
+    const displayHz = Math.round(screen.getPrimaryDisplay().displayFrequency) || 60;
     const eff = Math.min(cap, displayHz);
     if (eff > 0 && eff < displayHz) {
       gameWindow.webContents.setFrameRate(eff);
@@ -130,7 +157,7 @@ const applyHighRefreshPath = () => {
   if (settings.high_refresh_auto === false) return;
   try {
     const displays = screen.getAllDisplays();
-    const maxHz = displays.reduce((m, d) => Math.max(m, Math.round(d.refreshRate) || 0), 0);
+    const maxHz = displays.reduce((m, d) => Math.max(m, Math.round(d.displayFrequency) || 0), 0);
     const wantsHigh = maxHz >= _HIGH_REFRESH_THRESHOLD;
     if (wantsHigh === _highRefreshActive) return;
     _highRefreshActive = wantsHigh;
@@ -193,7 +220,6 @@ const _bhopJumpCode = () => {
 const _BhopBackstop = {};
 ipcMain.on("bhop-keys", (_, events) => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
-  _lastBhopFlush = Date.now();
   const jumpCode = _bhopJumpCode();
   const holdMs = Math.min(Math.max(Number(settings.bhop_hold_ms) || 4, 1), 60);
   for (const { key, down } of events) {
@@ -221,6 +247,9 @@ ipcMain.on("bhop-keys", (_, events) => {
       keyCode: code,
     });
   }
+  // No permanent polling loop: the safety release exists only while a
+  // synthetic key is held and is re-armed by incoming bhop pulses.
+  armSyntheticKeyFailsafe();
 });
 
 // ── Upstream Dawn Client IPC Handlers ─────────────────────────────────────
@@ -242,6 +271,19 @@ ipcMain.handle("ping-url", async (_event, url) => {
     }, 3000);
     request.end();
   });
+});
+
+ipcMain.handle("performance-benchmark-start", async (event) => {
+  return startPerformanceBenchmark(event.sender);
+});
+ipcMain.handle("performance-benchmark-last", () => _lastPerformanceReport);
+ipcMain.on("performance-benchmark-copy", () => {
+  if (_lastPerformanceReport) clipboard.writeText(JSON.stringify(_lastPerformanceReport, null, 2));
+});
+ipcMain.on("open-performance-reports", () => {
+  const reportsPath = getPerformanceReportsPath();
+  fs.mkdirSync(reportsPath, { recursive: true });
+  shell.openPath(reportsPath);
 });
 
 ipcMain.on("open-swapper-folder", () => {
@@ -471,7 +513,7 @@ ipcMain.on("save-sound", (event, soundname, filePath, volume) => {
     const inputPath = path.resolve(filePath);
     const savePath = path.join(soundsFolder, soundname);
 
-    ffmpeg(inputPath)
+    getFfmpeg()(inputPath)
       .setFfmpegPath(ffmpegPath)
       .audioFilters(`volume=${volume}`)
       .output(savePath)
@@ -718,7 +760,9 @@ const patchAndCache = async (targetScriptUrl) => {
     const { code: patched, meta } = applyPatches(code);
     const finalCode = patched + `\n//# sourceURL=${targetScriptUrl}` + `\nwindow.__patchMeta = ${JSON.stringify(meta)};`;
     _cacheSet(targetScriptUrl, finalCode);
-    console.log(`[dawn-patch] ${meta.applied.length ? 'patched' : 'passthrough'} ${new URL(targetScriptUrl).pathname.split('/').pop()} in ${Date.now() - t0}ms — applied:[${meta.applied.join(',') || '-'}] missing:[${meta.missing.join(',') || '-'}]`);
+    const patchMs = Date.now() - t0;
+    _startupMetrics["bundle fetch and patch"] = patchMs;
+    console.log(`[dawn-patch] ${meta.applied.length ? 'patched' : 'passthrough'} ${new URL(targetScriptUrl).pathname.split('/').pop()} in ${patchMs}ms — applied:[${meta.applied.join(',') || '-'}] missing:[${meta.missing.join(',') || '-'}]`);
     return finalCode;
   })();
   _inflightFetches.set(targetScriptUrl, p);
@@ -823,8 +867,10 @@ const createSplashWindow = () => {
     },
   });
 
+  _perf("splash window created");
   splashWindow.loadFile(path.join(__dirname, "assets/html/splash.html"));
   splashWindow.once("ready-to-show", () => {
+    _perf("splash ready to show");
     splashWindow.show();
     splashWindow.webContents.send("splash-ready");
   });
@@ -868,8 +914,11 @@ const createWindow = () => {
     },
     backgroundColor: "#141414",
   });
+  _perf("game window created");
 
+  gameWindow.webContents.once("dom-ready", () => _perf("game dom ready"));
   gameWindow.once("ready-to-show", () => {
+    _perf("game ready to show");
     if (gameWindow && !gameWindow.isDestroyed()) {
       gameWindow.show();
       try {
@@ -893,22 +942,29 @@ const createWindow = () => {
     if (gameWindow && !gameWindow.isVisible() && !gameWindow.isDestroyed()) {
       gameWindow.show();
     }
-    const _telemetryInterval = setInterval(async () => {
-      if (!gameWindow || gameWindow.isDestroyed()) { clearInterval(_telemetryInterval); return; }
-      // Frame telemetry only matters in a match — skip the 2s
-      // executeJavaScript round-trip while sitting in the lobby.
-      if (!_navIsMatch(gameWindow.webContents.getURL())) return;
-      try {
-        const stats = await gameWindow.webContents.executeJavaScript('window.__dawnTelemetry?.getStats()');
-        if (stats && stats.ready) {
-          console.log(`[live-telemetry] FPS: ${stats.fps} | FT avg: ${stats.avgFt}ms (min: ${stats.minFt}ms, max: ${stats.maxFt}ms, p99: ${stats.p99Ft}ms) | Jitter: ${stats.jitter}ms | Stutters: ${stats.stutters} | Hitches: ${stats.hitches} | Frames: ${stats.totalFrames}`);
-        }
-      } catch (e) {}
-    }, 2000);
+    // Continuous frame sampling/logging is a debug instrument, not free work
+    // for every player. Normal builds stay fully dormant until F9 or a
+    // benchmark explicitly starts telemetry.
+    if (process.env.DAWN_DEBUG) {
+      gameWindow.webContents.executeJavaScript("window.__dawnTelemetry?.start('debug')").catch(() => {});
+      const telemetryInterval = setInterval(async () => {
+        if (!gameWindow || gameWindow.isDestroyed()) { clearInterval(telemetryInterval); return; }
+        if (!_navIsMatch(gameWindow.webContents.getURL())) return;
+        try {
+          const stats = await gameWindow.webContents.executeJavaScript("window.__dawnTelemetry?.getStats()");
+          if (stats && stats.ready) {
+            console.log(`[live-telemetry] FPS: ${stats.fps} | FT avg: ${stats.avgFt}ms (min: ${stats.minFt}ms, max: ${stats.maxFt}ms, p99: ${stats.p99Ft}ms) | Jitter: ${stats.jitter}ms | Slow: ${stats.stutters} | Hitches: ${stats.hitches} | Frames: ${stats.totalFrames}`);
+          }
+        } catch (e) {}
+      }, 2000);
+    }
   });
 
   gameWindow.webContents.on("render-process-gone", (event, details) => {
     console.log("[game] Renderer process gone:", details.reason);
+    if (_activePerformanceBenchmark?.webContents === gameWindow.webContents) {
+      _failPerformanceBenchmark(_activePerformanceBenchmark, "Benchmark stopped because the renderer restarted.");
+    }
     releaseSyntheticKeys();
     if (gameWindow && !gameWindow.isDestroyed()) {
       setTimeout(() => {
@@ -1015,6 +1071,9 @@ const createWindow = () => {
   gameWindow.on("page-title-updated", (e) => e.preventDefault());
 
   gameWindow.on("closed", () => {
+    if (_activePerformanceBenchmark) {
+      _failPerformanceBenchmark(_activePerformanceBenchmark, "Benchmark stopped because the game window closed.");
+    }
     releaseSyntheticKeys();
     ipcMain.removeAllListeners("get-settings");
     ipcMain.removeAllListeners("update-setting");
@@ -1107,12 +1166,21 @@ const createWindow = () => {
       });
     }, 10000);
   }
+  _perf("game load started");
   gameWindow.loadURL(targetUrl);
   applyFrameCap();
   gameWindow.maximize();
-  registerShortcuts(gameWindow);
+  setImmediate(() => {
+    if (!gameWindow || gameWindow.isDestroyed()) return;
+    try {
+      require("./util/shortcuts").registerShortcuts(gameWindow);
+    } catch (error) {
+      console.warn("Shortcut registration failed:", error);
+    }
+  });
   if (settings.discord_rpc) {
     try {
+      const DiscordRPC = require("./addons/rpc");
       gameWindow.DiscordRPC = new DiscordRPC();
     } catch (e) {
       console.warn("DiscordRPC failed to initialize:", e);
@@ -1134,6 +1202,287 @@ const _navIsMatch = (url) => {
     return p.startsWith('/games') || p.startsWith('/hub/ranked');
   } catch { return false; }
 };
+
+// ── Repeatable performance benchmark ───────────────────────────────────────
+// Three seconds are reserved for closing the menu/re-acquiring pointer lock,
+// followed by a fixed 30-second capture. Frame times stay in the renderer;
+// process CPU/RSS are sampled here once per second so the measurement itself
+// remains cheap. Every run emits a JSON report that can be compared directly.
+const _PERF_WARMUP_MS = 3000;
+const _PERF_CAPTURE_MS = 30000;
+const _PERF_SAMPLE_MS = 1000;
+let _activePerformanceBenchmark = null;
+let _lastPerformanceReport = null;
+
+function getPerformanceReportsPath() {
+  return path.join(app.getPath("documents"), "DawnClient", "performance-reports");
+}
+
+const _kbToMb = (value) => round((Number(value) || 0) / 1024, 2);
+const _cpuOf = (metric) => round(metric?.cpu?.percentCPUUsage || 0, 2);
+const _memoryKbOf = (metric) => metric?.memory?.privateBytes || metric?.memory?.workingSetSize || 0;
+
+const _sendPerformanceStatus = (benchmark, payload) => {
+  try {
+    if (!benchmark.webContents.isDestroyed()) {
+      benchmark.webContents.send("performance-benchmark-status", payload);
+    }
+  } catch (error) {}
+};
+
+const _clearPerformanceTimers = (benchmark) => {
+  clearTimeout(benchmark.warmupTimer);
+  clearTimeout(benchmark.finishTimer);
+  clearInterval(benchmark.statusTimer);
+  clearInterval(benchmark.sampleTimer);
+};
+
+const _samplePerformanceProcesses = (benchmark) => {
+  if (!benchmark || benchmark.sampling || benchmark !== _activePerformanceBenchmark) return;
+  const elapsedSeconds = (Date.now() - benchmark.captureStartedAt) / 1000;
+  const previousSample = benchmark.samples[benchmark.samples.length - 1];
+  if (previousSample && elapsedSeconds - previousSample.elapsedSeconds < 0.5) return;
+  benchmark.sampling = true;
+  try {
+    const metrics = app.getAppMetrics();
+    const rendererPid = benchmark.webContents.getOSProcessId();
+    const browserMetric = metrics.find((metric) => metric.pid === process.pid || metric.type === "Browser");
+    const rendererMetric = metrics.find((metric) => metric.pid === rendererPid);
+    const gpuMetric = metrics.find((metric) => metric.type === "GPU");
+    if (!rendererMetric) benchmark.sampleErrors.push("renderer ProcessMetric unavailable");
+    if (!gpuMetric) benchmark.sampleErrors.push("GPU ProcessMetric unavailable");
+    const route = benchmark.webContents.getURL();
+
+    benchmark.samples.push({
+      elapsedSeconds: round(elapsedSeconds, 2),
+      inMatch: _navIsMatch(route),
+      cpuPercent: {
+        total: round(metrics.reduce((sum, metric) => sum + (metric.cpu?.percentCPUUsage || 0), 0), 2),
+        main: _cpuOf(browserMetric),
+        renderer: _cpuOf(rendererMetric),
+        gpu: _cpuOf(gpuMetric),
+      },
+      memoryMb: {
+        main: round(process.memoryUsage().rss / 1048576, 2),
+        renderer: _kbToMb(_memoryKbOf(rendererMetric)),
+        gpu: _kbToMb(_memoryKbOf(gpuMetric)),
+      },
+    });
+  } catch (error) {
+    benchmark.sampleErrors.push(error.message);
+  } finally {
+    benchmark.sampling = false;
+  }
+};
+
+const _summarizePerformanceSamples = (samples) => {
+  const series = (selector) => samples.map(selector).filter(Number.isFinite);
+  return {
+    cpuPercent: {
+      total: summarizeSeries(series((sample) => sample.cpuPercent.total)),
+      main: summarizeSeries(series((sample) => sample.cpuPercent.main)),
+      renderer: summarizeSeries(series((sample) => sample.cpuPercent.renderer)),
+      gpu: summarizeSeries(series((sample) => sample.cpuPercent.gpu)),
+    },
+    memoryMb: {
+      main: summarizeSeries(series((sample) => sample.memoryMb.main)),
+      renderer: summarizeSeries(series((sample) => sample.memoryMb.renderer)),
+      gpu: summarizeSeries(series((sample) => sample.memoryMb.gpu)),
+    },
+    inMatchSamples: samples.filter((sample) => sample.inMatch).length,
+    lobbySamples: samples.filter((sample) => !sample.inMatch).length,
+  };
+};
+
+const _failPerformanceBenchmark = (benchmark, message) => {
+  if (!benchmark || benchmark !== _activePerformanceBenchmark) return;
+  _clearPerformanceTimers(benchmark);
+  _activePerformanceBenchmark = null;
+  _sendPerformanceStatus(benchmark, { phase: "error", message });
+};
+
+const _finishPerformanceBenchmark = async (benchmark) => {
+  if (!benchmark || benchmark !== _activePerformanceBenchmark) return;
+  _clearPerformanceTimers(benchmark);
+  _samplePerformanceProcesses(benchmark);
+
+  let renderer = null;
+  try {
+    renderer = await benchmark.webContents.executeJavaScript(
+      "window.__dawnTelemetry?.finishBenchmark() ?? null",
+      true,
+    );
+  } catch (error) {
+    benchmark.sampleErrors.push(`renderer summary: ${error.message}`);
+  }
+
+  const completedAt = new Date();
+  const report = {
+    schemaVersion: 1,
+    generatedAt: completedAt.toISOString(),
+    app: {
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    system: {
+      cpu: os.cpus()[0]?.model || "unknown",
+      logicalCores: os.cpus().length,
+      totalMemoryGb: round(os.totalmem() / 1073741824, 2),
+      displayRefreshHz: benchmark.displayRefreshHz,
+      targetFps: benchmark.targetFps,
+    },
+    settings: {
+      engineProfile: settings.engine_profile,
+      fpsCap: Number(settings.fps_cap) || 0,
+      logicTickRate: Number(settings.logic_tick_rate) || 60,
+      interpolationDelayMs: Number(settings.interp_delay_ms) || 75,
+      thermalGuard: settings.thermal_guard !== false,
+      highRefreshAuto: settings.high_refresh_auto !== false,
+    },
+    run: {
+      warmupSeconds: _PERF_WARMUP_MS / 1000,
+      captureSeconds: _PERF_CAPTURE_MS / 1000,
+      processSampleIntervalSeconds: _PERF_SAMPLE_MS / 1000,
+      memoryUnit: "MiB (Electron KiB values converted by /1024)",
+      debugTelemetryEnabled: Boolean(process.env.DAWN_DEBUG),
+      appMetricGuardsPausedDuringCapture: true,
+      routeStart: benchmark.routeStart,
+      routeEnd: benchmark.webContents.isDestroyed() ? "renderer-destroyed" : benchmark.webContents.getURL(),
+      processSamples: benchmark.samples.length,
+      sampleErrors: [...new Set(benchmark.sampleErrors)],
+    },
+    startupMs: { ..._startupMetrics },
+    renderer,
+    processes: _summarizePerformanceSamples(benchmark.samples),
+    samples: benchmark.samples,
+  };
+
+  const reportsPath = getPerformanceReportsPath();
+  const fileName = `dawn-performance-${completedAt.toISOString().replace(/[:.]/g, "-")}.json`;
+  report.reportPath = path.join(reportsPath, fileName);
+  try {
+    fs.mkdirSync(reportsPath, { recursive: true });
+    fs.writeFileSync(report.reportPath, JSON.stringify(report, null, 2), "utf8");
+  } catch (error) {
+    report.run.sampleErrors.push(`report write: ${error.message}`);
+    report.reportPath = null;
+  }
+
+  _lastPerformanceReport = report;
+  _activePerformanceBenchmark = null;
+  const frames = renderer?.frames;
+  _sendPerformanceStatus(benchmark, {
+    phase: "complete",
+    report,
+    message: frames?.ready
+      ? `${frames.avgFps} FPS avg · ${frames.onePercentLowFps} FPS 1% low · ${frames.p99FrameTimeMs}ms p99`
+      : "Capture complete (frame summary unavailable)",
+  });
+  try {
+    benchmark.webContents.send("notification", {
+      message: frames?.ready
+        ? `Benchmark done: ${frames.avgFps} FPS avg · ${frames.onePercentLowFps} FPS 1% low`
+        : "Performance benchmark complete",
+    });
+  } catch (error) {}
+};
+
+async function startPerformanceBenchmark(sender) {
+  if (!gameWindow || gameWindow.isDestroyed() || sender !== gameWindow.webContents) {
+    return { started: false, error: "Game window is not available." };
+  }
+  if (_activePerformanceBenchmark) {
+    return { started: false, error: "A benchmark is already running." };
+  }
+
+  let displayRefreshHz = 60;
+  try {
+    displayRefreshHz = Math.round(screen.getDisplayMatching(gameWindow.getBounds()).displayFrequency) || 60;
+  } catch (error) {}
+  const requestedCap = Number(settings.fps_cap) || 0;
+  const targetFps = requestedCap > 0 ? Math.min(requestedCap, displayRefreshHz) : displayRefreshHz;
+  const benchmark = {
+    webContents: sender,
+    routeStart: sender.getURL(),
+    displayRefreshHz,
+    targetFps,
+    samples: [],
+    sampleErrors: [],
+    sampling: false,
+    warmupTimer: null,
+    finishTimer: null,
+    statusTimer: null,
+    sampleTimer: null,
+    captureStartedAt: 0,
+    captureEndsAt: 0,
+  };
+  _activePerformanceBenchmark = benchmark;
+
+  const warmupEndsAt = Date.now() + _PERF_WARMUP_MS;
+  _sendPerformanceStatus(benchmark, {
+    phase: "warmup",
+    remainingSeconds: _PERF_WARMUP_MS / 1000,
+    message: "Warm-up: close menu and resume normal play",
+  });
+
+  benchmark.statusTimer = setInterval(() => {
+    if (benchmark !== _activePerformanceBenchmark) return;
+    if (!benchmark.captureStartedAt) {
+      const remainingSeconds = Math.max(0, Math.ceil((warmupEndsAt - Date.now()) / 1000));
+      _sendPerformanceStatus(benchmark, { phase: "warmup", remainingSeconds, message: "Warm-up: close menu and resume normal play" });
+    } else {
+      const remainingSeconds = Math.max(0, Math.ceil((benchmark.captureEndsAt - Date.now()) / 1000));
+      _sendPerformanceStatus(benchmark, { phase: "recording", remainingSeconds, message: `Recording ${remainingSeconds}s` });
+    }
+  }, 1000);
+
+  benchmark.warmupTimer = setTimeout(async () => {
+    if (benchmark !== _activePerformanceBenchmark) return;
+    if (sender.isDestroyed()) {
+      _clearPerformanceTimers(benchmark);
+      _activePerformanceBenchmark = null;
+      return;
+    }
+    try {
+      const started = await sender.executeJavaScript(
+        `window.__dawnTelemetry?.startBenchmark(${JSON.stringify({ targetFps, durationSeconds: _PERF_CAPTURE_MS / 1000 })}) ?? false`,
+        true,
+      );
+      if (!started) {
+        _failPerformanceBenchmark(benchmark, "Renderer telemetry was unavailable or already active.");
+        return;
+      }
+    } catch (error) {
+      _failPerformanceBenchmark(benchmark, `Could not start renderer telemetry: ${error.message}`);
+      return;
+    }
+
+    // Prime Electron's interval CPU counters at the capture boundary. The
+    // first stored CPU sample will then represent one benchmark second rather
+    // than startup or the three-second warm-up.
+    app.getAppMetrics();
+    benchmark.captureStartedAt = Date.now();
+    benchmark.captureEndsAt = benchmark.captureStartedAt + _PERF_CAPTURE_MS;
+    _sendPerformanceStatus(benchmark, {
+      phase: "recording",
+      remainingSeconds: _PERF_CAPTURE_MS / 1000,
+      message: `Recording ${_PERF_CAPTURE_MS / 1000}s`,
+    });
+    benchmark.sampleTimer = setInterval(() => _samplePerformanceProcesses(benchmark), _PERF_SAMPLE_MS);
+    benchmark.finishTimer = setTimeout(() => _finishPerformanceBenchmark(benchmark), _PERF_CAPTURE_MS);
+  }, _PERF_WARMUP_MS);
+
+  return {
+    started: true,
+    warmupSeconds: _PERF_WARMUP_MS / 1000,
+    captureSeconds: _PERF_CAPTURE_MS / 1000,
+    targetFps,
+  };
+}
 
 const _forceGC = () => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
@@ -1179,35 +1528,44 @@ const matchEnded = () => {
 // process holds the texture memory on macOS — watch it separately so a
 // leak there gets caught too.
 const _MEM_WATCH_MS = 30000;
-const _MEM_SOFT_LIMIT = 2 * 1024 * 1024 * 1024;
-const _MEM_HARD_LIMIT = 3.5 * 1024 * 1024 * 1024;
-const _GPU_HARD_LIMIT = 2.5 * 1024 * 1024 * 1024;
+// Electron MemoryInfo values are kilobytes, not bytes. The previous byte-sized
+// thresholds were 1024x too high, so the leak watchdog could never fire.
+const _GB_IN_KB = 1024 * 1024;
+const _MEM_SOFT_LIMIT = 2 * _GB_IN_KB;
+const _MEM_HARD_LIMIT = 3.5 * _GB_IN_KB;
+const _GPU_HARD_LIMIT = 2.5 * _GB_IN_KB;
 let _memWatchTimer = null;
 
 const startMemoryWatchdog = () => {
   if (_memWatchTimer) return;
-  _memWatchTimer = setInterval(async () => {
+  _memWatchTimer = setInterval(() => {
     try {
       if (!gameWindow || gameWindow.isDestroyed()) return;
+      // getAppMetrics CPU values are interval-based. Do not reset those
+      // counters from the watchdog while the benchmark owns the sampler.
+      if (_activePerformanceBenchmark) return;
       if (gameWindow.webContents.isLoading()) return;
       const inMatch = _navIsMatch(gameWindow.webContents.getURL());
 
-      const info = await gameWindow.webContents.getProcessMemoryInfo();
-      const rss = info.privateMemory || info.workingSetSize || 0;
-      if (rss > _MEM_HARD_LIMIT && !inMatch) {
-        console.warn(`[mem] renderer RSS ${(rss / 1073741824).toFixed(2)}GB — hard reload`);
+      // WebContents has no getProcessMemoryInfo API in Electron 32. Resolve the
+      // renderer's ProcessMetric by OS pid; its MemoryInfo fields are KiB.
+      const metrics = app.getAppMetrics();
+      const rendererPid = gameWindow.webContents.getOSProcessId();
+      const rendererMetric = metrics.find((metric) => metric.pid === rendererPid);
+      const rendererKb = _memoryKbOf(rendererMetric);
+      if (rendererKb > _MEM_HARD_LIMIT && !inMatch) {
+        console.warn(`[mem] renderer process memory ${(rendererKb / _GB_IN_KB).toFixed(2)}GB — hard reload`);
         gameWindow.reload();
         return;
-      } else if (rss > _MEM_SOFT_LIMIT && !inMatch) {
-        console.warn(`[mem] renderer RSS ${(rss / 1073741824).toFixed(2)}GB — forcing GC`);
+      } else if (rendererKb > _MEM_SOFT_LIMIT && !inMatch) {
+        console.warn(`[mem] renderer process memory ${(rendererKb / _GB_IN_KB).toFixed(2)}GB — forcing GC`);
         _forceGC();
       }
 
-      let gpu = null;
-      for (const m of app.getAppMetrics()) if (m.type === "GPU") gpu = m;
-      const gpuRss = gpu?.memory?.workingSetSize || 0;
+      const gpu = metrics.find((metric) => metric.type === "GPU");
+      const gpuRss = _memoryKbOf(gpu);
       if (gpuRss > _GPU_HARD_LIMIT && !inMatch) {
-        console.warn(`[mem] GPU process RSS ${(gpuRss / 1073741824).toFixed(2)}GB — hard reload`);
+        console.warn(`[mem] GPU process RSS ${(gpuRss / _GB_IN_KB).toFixed(2)}GB — hard reload`);
         gameWindow.reload();
       }
     } catch (e) {}
@@ -1262,6 +1620,11 @@ const startThermalGuard = () => {
   _tgTimer = setInterval(() => {
     if (!gameWindow || gameWindow.isDestroyed()) return;
     if (settings.thermal_guard === false) return;
+    if (_activePerformanceBenchmark) {
+      _tgHighTicks = 0;
+      _tgLowTicks = 0;
+      return;
+    }
     if (!_navIsMatch(gameWindow.webContents.getURL())) {
       // Only act mid-match — lobby idle CPU spikes shouldn't change settings.
       _tgHighTicks = 0;
@@ -1294,18 +1657,22 @@ const startThermalGuard = () => {
   }, _TG_SAMPLE_MS);
 };
 
-const _t0 = Date.now();
-const _perf = (label) => console.log(`[perf] ${label} +${Date.now() - _t0}ms`);
-
 const initGame = () => {
   _perf('initGame');
-  pruneBundleCache();
   createSplashWindow();
-  // Warm in parallel — never block window creation on the network.
-  warmBundleCache().catch(() => {});
-  // The splash window is alwaysOnTop and paints within ~50ms, so the game
-  // window starts loading immediately — no artificial delay needed.
+  // Construct the game window before touching the disk cache. Calling an async
+  // function still runs its synchronous prefix immediately; the old order
+  // therefore blocked window creation on readFileSync despite claiming the
+  // warm-up was parallel. Stale-cache pruning is deferred for the same reason.
   createWindow();
+  setImmediate(() => {
+    pruneBundleCache();
+    warmBundleCache()
+      .then(() => {
+        _startupMetrics["bundle warm complete"] = Date.now() - _mainStartedAt;
+      })
+      .catch(() => {});
+  });
   if (gameWindow) {
     gameWindow.webContents.once("did-finish-load", () => {
       setTimeout(() => {
@@ -1317,6 +1684,7 @@ const initGame = () => {
   }
 };
 
+_perf("main module initialized");
 app.on("ready", () => {
   _perf('app ready');
   // Watch for display attach/detach — high-refresh path re-evaluates when the

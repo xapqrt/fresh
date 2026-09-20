@@ -110,7 +110,7 @@ const customReqScripts = (settings) => {
     borderRadius: ".25rem",
   });
 
-  const observer = new MutationObserver(() => {
+  const applyRouteFeatures = () => {
     if (window.location.href === `${base_url}inventory` && custom_list_price) {
       const sellElem = document.querySelector(".cont-sell");
       if (sellElem && !document.getElementById("juice-custom-listing") && sellElem.parentElement.parentElement.id !== "sell-item-modal") {
@@ -131,9 +131,31 @@ const customReqScripts = (settings) => {
       marketUsers();
       updating = true;
     }
-  });
+  };
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  // These features only exist on inventory/market routes. Keeping a subtree
+  // observer on document.body during every match made unrelated HUD mutations
+  // execute both route checks continuously.
+  let routeObserver = null;
+  const syncRouteObserver = () => {
+    const relevantRoute =
+      (window.location.href === `${base_url}inventory` && custom_list_price) ||
+      (window.location.href === `${base_url}hub/market` && market_names && ids.length > 0);
+
+    if (!relevantRoute) {
+      routeObserver?.disconnect();
+      routeObserver = null;
+      return;
+    }
+    if (!routeObserver) {
+      routeObserver = new MutationObserver(applyRouteFeatures);
+      routeObserver.observe(document.body, { childList: true, subtree: true });
+    }
+    applyRouteFeatures();
+  };
+
+  window.addEventListener("url-changed", syncRouteObserver);
+  syncRouteObserver();
 };
 
 module.exports = { customReqScripts };

@@ -74,6 +74,7 @@ class Menu {
     this.handleAppearance();
     this.handleSearch();
     this.handleButtons();
+    this.initPerformanceBenchmark();
     this.handleInfoTooltips();
     this.handleClearFields();
     this.handleQuickCSS();
@@ -2054,6 +2055,114 @@ class Menu {
     });
   }
 
+  initPerformanceBenchmark() {
+    const runButton = this.menu.querySelector("#run-performance-benchmark");
+    const copyButton = this.menu.querySelector("#copy-performance-benchmark");
+    const openButton = this.menu.querySelector("#open-performance-reports");
+    const status = this.menu.querySelector("#performance-benchmark-status");
+    const results = this.menu.querySelector("#performance-benchmark-results");
+    if (!runButton || !copyButton || !openButton || !status || !results) return;
+
+    let lastReport = null;
+    const setStatus = (message, state = "") => {
+      status.textContent = message;
+      status.classList.remove("recording", "error");
+      if (state) status.classList.add(state);
+    };
+
+    const renderReport = (report) => {
+      if (!report) return;
+      lastReport = report;
+      copyButton.disabled = false;
+      const frames = report.renderer?.frames;
+      const processes = report.processes;
+      const rendererMemory = processes?.memoryMb?.renderer;
+      const gpuMemory = processes?.memoryMb?.gpu;
+      const totalCpu = processes?.cpuPercent?.total;
+      const rendererCpu = processes?.cpuPercent?.renderer;
+      const gpuCpu = processes?.cpuPercent?.gpu;
+      const longTasks = report.renderer?.longTasks;
+      const lines = [];
+
+      if (frames?.ready) {
+        lines.push(`FPS avg          ${frames.avgFps}`);
+        lines.push(`1% / 0.1% low   ${frames.onePercentLowFps} / ${frames.pointOnePercentLowFps}`);
+        lines.push(`Frame p95 / p99 ${frames.p95FrameTimeMs}ms / ${frames.p99FrameTimeMs}ms`);
+        lines.push(`Worst frame      ${frames.maxFrameTimeMs}ms`);
+        lines.push(`Slow / >50ms     ${frames.slowFrames} / ${frames.framesOver50Ms}`);
+      } else {
+        lines.push("Frame summary unavailable");
+      }
+      lines.push("");
+      lines.push(`CPU avg total    ${totalCpu?.avg ?? 0}%`);
+      lines.push(`CPU renderer/GPU ${rendererCpu?.avg ?? 0}% / ${gpuCpu?.avg ?? 0}%`);
+      lines.push(`Renderer MiB avg ${rendererMemory?.avg ?? 0} (peak ${rendererMemory?.max ?? 0}, Δ ${rendererMemory?.delta ?? 0})`);
+      lines.push(`GPU MiB avg      ${gpuMemory?.avg ?? 0} (peak ${gpuMemory?.max ?? 0}, Δ ${gpuMemory?.delta ?? 0})`);
+      lines.push(`Long tasks       ${longTasks?.count ?? 0} (worst ${longTasks?.longestMs ?? 0}ms)`);
+      lines.push(`App startup load ${report.startupMs?.["game did-finish-load"] ?? 0}ms`);
+      lines.push(`Page load event  ${report.renderer?.navigationMs?.loadEvent ?? 0}ms`);
+      lines.push(`Match samples    ${processes?.inMatchSamples ?? 0}/${report.run?.processSamples ?? 0}`);
+      lines.push("");
+      lines.push(`Saved: ${report.reportPath || "not saved"}`);
+
+      results.textContent = lines.join("\n");
+      results.hidden = false;
+    };
+
+    ipcRenderer.on("performance-benchmark-status", (_event, payload) => {
+      if (!payload) return;
+      if (payload.phase === "warmup") {
+        runButton.disabled = true;
+        setStatus(`${payload.message} (${payload.remainingSeconds}s)`, "recording");
+      } else if (payload.phase === "recording") {
+        runButton.disabled = true;
+        setStatus(payload.message, "recording");
+      } else if (payload.phase === "complete") {
+        runButton.disabled = false;
+        setStatus(payload.message);
+        renderReport(payload.report);
+      } else if (payload.phase === "error") {
+        runButton.disabled = false;
+        setStatus(payload.message || "Benchmark failed", "error");
+      }
+    });
+
+    runButton.addEventListener("click", async () => {
+      runButton.disabled = true;
+      setStatus("Starting benchmark…", "recording");
+      try {
+        const response = await ipcRenderer.invoke("performance-benchmark-start");
+        if (!response?.started) {
+          runButton.disabled = false;
+          setStatus(response?.error || "Benchmark could not start", "error");
+          return;
+        }
+
+        // The menu itself adds compositing work. Close it before the warm-up so
+        // every run measures the game rather than a translucent settings panel.
+        this.menuToggle.setAttribute("data-active", "false");
+        this.localStorage.setItem("juice-menu", "false");
+      } catch (error) {
+        runButton.disabled = false;
+        setStatus(error.message || "Benchmark could not start", "error");
+      }
+    });
+
+    copyButton.addEventListener("click", () => {
+      if (!lastReport) return;
+      ipcRenderer.send("performance-benchmark-copy");
+      setStatus("Last JSON report copied to clipboard.");
+    });
+    openButton.addEventListener("click", () => ipcRenderer.send("open-performance-reports"));
+
+    ipcRenderer.invoke("performance-benchmark-last").then((report) => {
+      if (report) {
+        renderReport(report);
+        setStatus("Last benchmark loaded. Run again to compare this session.");
+      }
+    }).catch(() => {});
+  }
+
   handleButtons() {
     let selectedTradeId = null;
     let chatObserver = null;
@@ -2072,19 +2181,16 @@ class Menu {
     };
 
     const observeChat = () => {
-      if (chatObserver) {
-        chatObserver.disconnect();
-        chatObserver = null;
-      }
+      if (chatObserver) chatObserver.disconnect();
 
       const chatContainer = document.querySelector(".servers .chat");
-      if (!chatContainer) return;
+      if (!chatContainer) {
+        chatObserver = null;
+        return;
+      }
 
-      const observer = new MutationObserver(() => {
-        highlightSelectedTrade();
-      });
-
-      observer.observe(chatContainer, {
+      chatObserver = new MutationObserver(highlightSelectedTrade);
+      chatObserver.observe(chatContainer, {
         childList: true,
         subtree: true,
       });
@@ -2092,21 +2198,37 @@ class Menu {
       highlightSelectedTrade();
     };
 
-    const bodyObserver = new MutationObserver(() => {
-      const chatContainer = document.querySelector(".servers .chat");
+    // The old document-wide observer remained active in matches and, because
+    // it never assigned chatObserver, stacked another chat observer on every
+    // servers-page mutation. Watch the body only while that route is active.
+    let serversBodyObserver = null;
+    const stopServersObserver = () => {
+      serversBodyObserver?.disconnect();
+      serversBodyObserver = null;
+      chatObserver?.disconnect();
+      chatObserver = null;
+    };
+    const syncServersObserver = () => {
+      const onServersRoute = window.location.pathname.startsWith("/servers");
+      if (!onServersRoute) {
+        stopServersObserver();
+        return;
+      }
 
-      if (chatContainer && !chatObserver) {
-        observeChat();
-      } else if (!chatContainer && chatObserver) {
+      const chatContainer = document.querySelector(".servers .chat");
+      if (chatContainer && !chatObserver) observeChat();
+      else if (!chatContainer && chatObserver) {
         chatObserver.disconnect();
         chatObserver = null;
       }
-    });
+      if (!serversBodyObserver) {
+        serversBodyObserver = new MutationObserver(syncServersObserver);
+        serversBodyObserver.observe(document.body, { childList: true, subtree: true });
+      }
+    };
 
-    bodyObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    window.addEventListener("url-changed", syncServersObserver);
+    syncServersObserver();
 
     document.addEventListener("click", async (e) => {
       if (this.settings.accept_on_click) {

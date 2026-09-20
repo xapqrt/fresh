@@ -919,6 +919,22 @@
           </div>
         </div>
       </div>
+      <div class="option-group wide performance-benchmark">
+        <div class="group-title">Repeatable Benchmark</div>
+        <div class="option">
+          <div class="left">
+            <span>30-second capture</span>
+            <span class="description">3s warm-up, then measures frame-time p95/p99, 1% lows, long tasks, CPU, renderer/GPU memory, and startup timings. Run the same map and settings when comparing.</span>
+          </div>
+          <button type="button" class="juice-button benchmark-run" id="run-performance-benchmark">Run Benchmark</button>
+        </div>
+        <div class="benchmark-status" id="performance-benchmark-status">Ready. For useful results, start this while you are in a match.</div>
+        <pre class="benchmark-results" id="performance-benchmark-results" hidden></pre>
+        <div class="benchmark-actions">
+          <button type="button" class="juice-button" id="copy-performance-benchmark" disabled>Copy Last Report</button>
+          <button type="button" class="juice-button" id="open-performance-reports">Open Reports Folder</button>
+        </div>
+      </div>
     </div></div>
     <div id="client-options" class="juice options">
       <div id="inner-tabs" class="juice tabs">

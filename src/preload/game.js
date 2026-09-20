@@ -32,71 +32,214 @@ function sanitizeBlockRgbSettings() {
 }
 sanitizeBlockRgbSettings();
 
+const { summarizeFrameTimes } = require("../util/perf-metrics");
+
+// Frame telemetry is demand-driven. The old sampler ran a second rAF loop for
+// the entire lifetime of the client and shifted an Array every frame, even
+// when nobody was looking at the data. Now F9, DAWN_DEBUG, and the benchmark
+// explicitly acquire a consumer; with all three off, telemetry costs nothing.
+const _TELEMETRY_WINDOW_SIZE = 300;
+const _telemetryWindow = new Float32Array(_TELEMETRY_WINDOW_SIZE);
+const _telemetryConsumers = new Set();
+let _telemetryWindowCount = 0;
+let _telemetryWindowIndex = 0;
+let _telemetryLastT = 0;
+let _telemetryRAF = null;
+let _telemetryTotalFrames = 0;
+let _telemetryTargetFps = 60;
+let _benchmarkCapture = null;
+let _benchmarkLongTaskObserver = null;
 let _frameTimeOverlay = null;
 let _frameTimeActive = false;
-let _ftRAF = null;
-let _telemetryHistory = [];
-let _telemetryLastT = performance.now();
-let _telemetryStutters = 0;
-let _telemetryHitches = 0;
-let _telemetryTotalFrames = 0;
+let _ftTimer = null;
 
-function _telemetryLoop(t) {
-  const dt = t - _telemetryLastT;
-  _telemetryLastT = t;
-  if (dt > 0 && dt < 1000) {
-    _telemetryTotalFrames++;
-    if (_telemetryTotalFrames > 60) {
-      if (dt > 16.7) _telemetryStutters++;
-      if (dt > 33.3) _telemetryHitches++;
-    }
-    _telemetryHistory.push(dt);
-    if (_telemetryHistory.length > 240) _telemetryHistory.shift();
+const _rollingFrameSamples = () => {
+  const result = new Array(_telemetryWindowCount);
+  const start = _telemetryWindowCount === _TELEMETRY_WINDOW_SIZE ? _telemetryWindowIndex : 0;
+  for (let index = 0; index < _telemetryWindowCount; index++) {
+    result[index] = _telemetryWindow[(start + index) % _TELEMETRY_WINDOW_SIZE];
   }
-  requestAnimationFrame(_telemetryLoop);
+  return result;
+};
+
+const _pushRollingFrame = (frameTime) => {
+  _telemetryWindow[_telemetryWindowIndex] = frameTime;
+  _telemetryWindowIndex = (_telemetryWindowIndex + 1) % _TELEMETRY_WINDOW_SIZE;
+  if (_telemetryWindowCount < _TELEMETRY_WINDOW_SIZE) _telemetryWindowCount++;
+};
+
+function _telemetryLoop(timestamp) {
+  if (!_telemetryConsumers.size) {
+    _telemetryRAF = null;
+    _telemetryLastT = 0;
+    return;
+  }
+
+  const frameTime = _telemetryLastT ? timestamp - _telemetryLastT : 0;
+  _telemetryLastT = timestamp;
+
+  if (frameTime > 0 && frameTime < 1000) {
+    _telemetryTotalFrames++;
+    _pushRollingFrame(frameTime);
+  }
+
+  if (_benchmarkCapture && frameTime > 0) {
+    if (document.visibilityState === "visible" && frameTime < 5000) {
+      if (_benchmarkCapture.frameCount < _benchmarkCapture.frameTimes.length) {
+        _benchmarkCapture.frameTimes[_benchmarkCapture.frameCount++] = frameTime;
+      } else {
+        _benchmarkCapture.overflowSamples++;
+      }
+    } else {
+      _benchmarkCapture.discardedSamples++;
+    }
+  }
+
+  _telemetryRAF = requestAnimationFrame(_telemetryLoop);
 }
-requestAnimationFrame(_telemetryLoop);
+
+const _startTelemetry = (consumer, targetFps = _telemetryTargetFps) => {
+  if (!_telemetryConsumers.size) {
+    _telemetryWindowCount = 0;
+    _telemetryWindowIndex = 0;
+    _telemetryTotalFrames = 0;
+  }
+  _telemetryConsumers.add(consumer);
+  _telemetryTargetFps = Number(targetFps) > 0 ? Number(targetFps) : 60;
+  if (_telemetryRAF === null) {
+    _telemetryLastT = performance.now();
+    _telemetryRAF = requestAnimationFrame(_telemetryLoop);
+  }
+};
+
+const _stopTelemetry = (consumer) => {
+  _telemetryConsumers.delete(consumer);
+  if (!_telemetryConsumers.size && _telemetryRAF !== null) {
+    cancelAnimationFrame(_telemetryRAF);
+    _telemetryRAF = null;
+    _telemetryLastT = 0;
+  }
+};
+
+const _startBenchmarkCapture = (options = {}) => {
+  if (_benchmarkCapture) return false;
+  // Keep the instrumentation consistent: the optional F9 overlay performs its
+  // own sorting and DOM updates, so turn it off before a benchmark run.
+  if (_frameTimeActive) toggleFrameTimeLogger();
+  const targetFps = Math.max(1, Number(options.targetFps) || 60);
+  const durationSeconds = Math.max(1, Number(options.durationSeconds) || 30);
+  // Preallocate to avoid Array growth/GC becoming benchmark noise. The 2x
+  // margin also covers a cap lower than the actual compositor cadence.
+  const frameCapacity = Math.min(120000, Math.max(4096, Math.ceil(targetFps * durationSeconds * 2)));
+  _benchmarkCapture = {
+    startedAt: performance.now(),
+    targetFps,
+    frameTimes: new Float32Array(frameCapacity),
+    frameCount: 0,
+    overflowSamples: 0,
+    discardedSamples: 0,
+    longTaskCount: 0,
+    longTaskTotalMs: 0,
+    longestTaskMs: 0,
+    heapStartMb: performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null,
+  };
+
+  if (typeof PerformanceObserver !== "undefined") {
+    try {
+      _benchmarkLongTaskObserver = new PerformanceObserver((list) => {
+        if (!_benchmarkCapture) return;
+        for (const entry of list.getEntries()) {
+          _benchmarkCapture.longTaskCount++;
+          _benchmarkCapture.longTaskTotalMs += entry.duration;
+          _benchmarkCapture.longestTaskMs = Math.max(_benchmarkCapture.longestTaskMs, entry.duration);
+        }
+      });
+      _benchmarkLongTaskObserver.observe({ entryTypes: ["longtask"] });
+    } catch (error) {
+      _benchmarkLongTaskObserver = null;
+    }
+  }
+
+  _startTelemetry("benchmark", targetFps);
+  return true;
+};
+
+const _finishBenchmarkCapture = () => {
+  if (!_benchmarkCapture) return null;
+  const capture = _benchmarkCapture;
+  _benchmarkCapture = null;
+  if (_benchmarkLongTaskObserver) {
+    _benchmarkLongTaskObserver.disconnect();
+    _benchmarkLongTaskObserver = null;
+  }
+  _stopTelemetry("benchmark");
+
+  const navigation = performance.getEntriesByType("navigation")[0];
+  const paints = Object.fromEntries(
+    performance.getEntriesByType("paint").map((entry) => [entry.name, +entry.startTime.toFixed(2)]),
+  );
+
+  return {
+    elapsedSeconds: +((performance.now() - capture.startedAt) / 1000).toFixed(2),
+    frames: summarizeFrameTimes(capture.frameTimes.subarray(0, capture.frameCount), capture.targetFps),
+    frameBufferCapacity: capture.frameTimes.length,
+    overflowSamples: capture.overflowSamples,
+    navigationMs: navigation
+      ? {
+          responseEnd: +navigation.responseEnd.toFixed(2),
+          domInteractive: +navigation.domInteractive.toFixed(2),
+          domContentLoaded: +navigation.domContentLoadedEventEnd.toFixed(2),
+          loadEvent: +navigation.loadEventEnd.toFixed(2),
+          firstPaint: paints["first-paint"] ?? null,
+          firstContentfulPaint: paints["first-contentful-paint"] ?? null,
+        }
+      : null,
+    discardedSamples: capture.discardedSamples,
+    longTasks: {
+      count: capture.longTaskCount,
+      totalMs: +capture.longTaskTotalMs.toFixed(2),
+      longestMs: +capture.longestTaskMs.toFixed(2),
+    },
+    jsHeap: {
+      startMb: capture.heapStartMb === null ? null : +capture.heapStartMb.toFixed(2),
+      endMb: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(2) : null,
+    },
+    visibilityState: document.visibilityState,
+  };
+};
 
 window.__dawnTelemetry = {
+  start: _startTelemetry,
+  stop: _stopTelemetry,
+  startBenchmark: _startBenchmarkCapture,
+  finishBenchmark: _finishBenchmarkCapture,
   getStats() {
-    const len = _telemetryHistory.length;
-    if (len < 10) return { ready: false, totalFrames: _telemetryTotalFrames };
-    let min = Infinity, max = -Infinity, sum = 0;
-    for (let i = 0; i < len; i++) {
-      const v = _telemetryHistory[i];
-      if (v < min) min = v;
-      if (v > max) max = v;
-      sum += v;
+    const frames = summarizeFrameTimes(_rollingFrameSamples(), _telemetryTargetFps);
+    if (!frames.ready || frames.samples < 10) {
+      return { ready: false, active: _telemetryConsumers.size > 0, totalFrames: _telemetryTotalFrames };
     }
-    const avg = sum / len;
-    let varianceSum = 0;
-    for (let i = 0; i < len; i++) {
-      varianceSum += Math.pow(_telemetryHistory[i] - avg, 2);
-    }
-    const jitter = Math.sqrt(varianceSum / len);
-    const sorted = [..._telemetryHistory].sort((a, b) => a - b);
-    const p99 = sorted[Math.floor(len * 0.99)] || max;
-    const fps = 1000 / avg;
     return {
       ready: true,
-      fps: Math.round(fps),
-      avgFt: +(avg.toFixed(2)),
-      minFt: +(min.toFixed(2)),
-      maxFt: +(max.toFixed(2)),
-      p99Ft: +(p99.toFixed(2)),
-      jitter: +(jitter.toFixed(2)),
-      stutters: _telemetryStutters,
-      hitches: _telemetryHitches,
+      active: true,
+      fps: Math.round(frames.avgFps),
+      avgFt: frames.avgFrameTimeMs,
+      minFt: frames.minFrameTimeMs,
+      maxFt: frames.maxFrameTimeMs,
+      p99Ft: frames.p99FrameTimeMs,
+      jitter: frames.jitterMs,
+      stutters: frames.slowFrames,
+      hitches: frames.hitches,
       totalFrames: _telemetryTotalFrames,
-      recentSamples: len,
+      recentSamples: frames.samples,
     };
-  }
+  },
 };
 
 function toggleFrameTimeLogger() {
   _frameTimeActive = !_frameTimeActive;
   if (!_frameTimeActive) {
-    if (_ftRAF) { cancelAnimationFrame(_ftRAF); _ftRAF = null; }
+    if (_ftTimer) { clearInterval(_ftTimer); _ftTimer = null; }
+    _stopTelemetry("overlay");
     if (_frameTimeOverlay) { _frameTimeOverlay.remove(); _frameTimeOverlay = null; }
     return;
   }
@@ -115,18 +258,14 @@ function toggleFrameTimeLogger() {
     document.body.appendChild(_frameTimeOverlay);
   }
 
-  function _sample() {
+  _startTelemetry("overlay");
+  const sample = () => {
     const stats = window.__dawnTelemetry.getStats();
-    if (!stats.ready) {
-      if (_frameTimeActive) _ftRAF = requestAnimationFrame(_sample);
-      return;
-    }
+    if (!stats.ready || !_frameTimeOverlay) return;
 
-    // Live engine metrics exposed by the patched game loop (main.js PATCHES):
-    //  __dawnTickDt         — measured main-loop delta in seconds
-    //  __dawnTickMul        — logic overclock multiplier (1=60Hz … 8=480Hz)
-    //  __dawnInterpSnapshots — snapshots-back the remote buffer is rendering
-    //  __dawnInterpDelayMs  — target interp delay slider value in ms
+    // Updating this overlay every rendered frame used to sort 240 samples up
+    // to 60+ times a second. Four UI refreshes per second remain responsive
+    // without making the profiler itself a source of frame-time noise.
     const tickDt = Number(window.__dawnTickDt);
     const tickMul = window.__dawnTickMul || 1;
     const tickSamples = window.__dawnTickSamples || (window.__dawnTickSamples = []);
@@ -134,30 +273,31 @@ function toggleFrameTimeLogger() {
       tickSamples.push(tickDt);
       if (tickSamples.length > 120) tickSamples.shift();
     }
-    let lines = [
+    const lines = [
       `Render FPS ${stats.fps}  (rAF)`,
       `FT min ${stats.minFt}ms  max ${stats.maxFt}ms  avg ${stats.avgFt}ms  p99 ${stats.p99Ft}ms`,
-      `FT jitter ${stats.jitter}ms  stutters ${stats.stutters}  hitches ${stats.hitches}`,
+      `FT jitter ${stats.jitter}ms  slow ${stats.stutters}  hitches ${stats.hitches}`,
     ];
     if (tickSamples.length) {
-      const sum = tickSamples.reduce((a, b) => a + b, 0);
-      const avgDt = sum / tickSamples.length; // seconds between loop invocations
-      const logicHz = Math.round(1 / avgDt);
-      lines.push(`Logic Tick ~${logicHz}Hz  (mul x${tickMul})`);
+      const avgDt = tickSamples.reduce((sum, value) => sum + value, 0) / tickSamples.length;
+      lines.push(`Logic Tick ~${Math.round(1 / avgDt)}Hz  (mul x${tickMul})`);
     }
-    const snaps = Number(window.__dawnInterpSnapshots);
+    const snapshots = Number(window.__dawnInterpSnapshots);
     const targetMs = Number(window.__dawnInterpDelayMs) || 75;
-    if (Number.isFinite(snaps)) {
-      lines.push(`Interp ${snaps} snapshots  (~${snaps * 33}ms, target ${targetMs}ms)`);
+    if (Number.isFinite(snapshots)) {
+      lines.push(`Interp ${snapshots} snapshots  (~${snapshots * 33}ms, target ${targetMs}ms)`);
     }
     _frameTimeOverlay.textContent = lines.join("\n");
-    if (_frameTimeActive) _ftRAF = requestAnimationFrame(_sample);
-  }
-  _ftRAF = requestAnimationFrame(_sample);
+  };
+  sample();
+  _ftTimer = setInterval(sample, 250);
 }
 
-document.addEventListener("keydown", (e) => {
-  if (e.code === "F9") { e.preventDefault(); toggleFrameTimeLogger(); }
+document.addEventListener("keydown", (event) => {
+  if (event.code === "F9") {
+    event.preventDefault();
+    toggleFrameTimeLogger();
+  }
 });
 
 const { installBhopHook } = require("./game/bhop");
@@ -223,16 +363,43 @@ const observeForElement = (selector, functionToRun, target = document.body) => {
   return observer;
 };
 
-const waitForElement = (selector, callback) => {
-  const tryApply = () => {
-    const el = document.querySelector(selector);
-    if (el) {
-      callback(el);
-    } else {
-      setTimeout(tryApply, 10);
-    }
+// One-shot DOM wait. The previous implementation queried the entire document
+// every 10ms until a selector appeared; several optional screens could leave
+// those 100Hz pollers alive indefinitely. MutationObserver sleeps until the DOM
+// actually changes and disconnects before invoking the callback.
+const waitForElement = (selector, callback, root = document) => {
+  const queryRoot = root && typeof root.querySelector === "function" ? root : document;
+  let observer = null;
+  let cancelled = false;
+
+  const finishIfFound = () => {
+    if (cancelled) return true;
+    const element = queryRoot.querySelector(selector);
+    if (!element) return false;
+    if (observer) observer.disconnect();
+    observer = null;
+    callback(element);
+    return true;
   };
-  setTimeout(tryApply, 0);
+
+  if (finishIfFound()) return () => {};
+
+  const observe = () => {
+    if (cancelled || finishIfFound()) return;
+    const target = queryRoot === document ? document.documentElement : queryRoot;
+    if (!target) return;
+    observer = new MutationObserver(finishIfFound);
+    observer.observe(target, { childList: true, subtree: true });
+  };
+
+  if (document.documentElement) observe();
+  else document.addEventListener("DOMContentLoaded", observe, { once: true });
+
+  return () => {
+    cancelled = true;
+    if (observer) observer.disconnect();
+    observer = null;
+  };
 };
 
 let customNotification = (data) => {
@@ -509,12 +676,17 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     btn.replaceWith(discordBtn);
 
-    setInterval(() => {
-      discordBtn.className = "card-cont soc-group";
+    // The transition class only needs removing once. This used to wake the
+    // renderer every 300ms forever to assign the exact same class.
+    setTimeout(() => {
+      if (discordBtn.isConnected) discordBtn.className = "card-cont soc-group";
     }, 300);
   };
 
   const initRoomPresets = () => {
+    if (window.__dawnRoomPresetsInitialized) return;
+    window.__dawnRoomPresetsInitialized = true;
+
     let presets = (() => {
       try {
         const stored = localStorage.getItem("dawn-room-presets");
@@ -1140,6 +1312,10 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   const initWeaponMods = () => {
     const liveSettings = { ...settings };
+    let weaponCustomizationActive = false;
+    let recomputeWeaponHookState = () => {};
+    let syncWeaponFrameTicker = () => {};
+
     const readSetting = (key, def) => {
       const v = liveSettings[key];
       if (v === undefined || v === null || v === "") return def;
@@ -1153,6 +1329,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     document.addEventListener("juice-settings-changed", ({ detail }) => {
       liveSettings[detail.setting] = detail.value;
+      recomputeWeaponHookState();
     });
 
     let inspectStart = null;
@@ -1500,42 +1677,114 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (id) {
         domWeaponId = id;
         window.currentWeaponId = id;
+        recomputeWeaponHookState();
       }
     };
 
     updateDomWeaponId();
 
-    const weaponMutationObserver = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        if (m.type === "attributes" && m.attributeName === "class") {
-          if (m.target instanceof HTMLElement && m.target.classList.contains("bottom")) {
-            updateDomWeaponId();
-            return;
-          }
-        } else if (m.type === "childList") {
-          for (const node of m.addedNodes) {
-            if (node instanceof HTMLElement && (node.classList?.contains("weapon-cont") || node.querySelector?.(".weapon-cont"))) {
-              updateDomWeaponId();
-              return;
-            }
-          }
+    const weaponSelectionObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (
+          mutation.type === "attributes" &&
+          mutation.target instanceof HTMLElement &&
+          mutation.target.classList.contains("bottom")
+        ) {
+          updateDomWeaponId();
+          return;
+        }
+        if (mutation.type === "childList" && mutation.addedNodes.length) {
+          updateDomWeaponId();
+          return;
         }
       }
     });
+    const observedWeaponRoots = new WeakSet();
+    const observeWeaponRoot = (root) => {
+      if (!(root instanceof HTMLElement) || observedWeaponRoots.has(root)) return;
+      observedWeaponRoots.add(root);
+      weaponSelectionObserver.observe(root, {
+        attributes: true,
+        attributeFilter: ["class"],
+        childList: true,
+        subtree: true,
+      });
+    };
+    document.querySelectorAll(".weapon-cont").forEach(observeWeaponRoot);
 
-    weaponMutationObserver.observe(document.body, {
-      attributes: true,
-      attributeFilter: ["class"],
-      childList: true,
-      subtree: true,
+    // Discover replacement weapon pickers without subscribing to every class
+    // animation in the document. Attribute observation is scoped to the small
+    // weapon roots; the body observer only processes newly inserted nodes.
+    const weaponRootObserver = new MutationObserver((mutations) => {
+      let foundRoot = false;
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof HTMLElement)) continue;
+          if (node.classList.contains("weapon-cont")) {
+            observeWeaponRoot(node);
+            foundRoot = true;
+          }
+          node.querySelectorAll?.(".weapon-cont").forEach((root) => {
+            observeWeaponRoot(root);
+            foundRoot = true;
+          });
+        }
+      }
+      if (foundRoot) updateDomWeaponId();
     });
+    weaponRootObserver.observe(document.body, { childList: true, subtree: true });
+
+    const differs = (value, baseline) => Math.abs(Number(value) - baseline) > 0.00001;
+    recomputeWeaponHookState = () => {
+      const weaponId = domWeaponId || readSetting("active_weapon", "vita") || "vita";
+      const weaponChanged =
+        !!readSetting("weapon_wireframe", false) ||
+        !!readSetting("weapon_color", false) ||
+        differs(getWeaponSetting(weaponId, "size", 1), 1) ||
+        differs(getWeaponSetting(weaponId, "offset_x", 0), 0) ||
+        differs(getWeaponSetting(weaponId, "offset_y", 0), 0) ||
+        differs(getWeaponSetting(weaponId, "offset_z", 0), 0) ||
+        differs(getWeaponSetting(weaponId, "rotation_x", 0), 0) ||
+        differs(getWeaponSetting(weaponId, "rotation_y", 0), 0) ||
+        differs(getWeaponSetting(weaponId, "rotation_z", 0), 0);
+
+      let armChanged = !!readSetting("arm_wireframe", false) || !!readSetting("arm_color", false);
+      for (const side of ["left", "right"]) {
+        armChanged =
+          armChanged ||
+          differs(getArmSetting(weaponId, side, "size", 1), 1) ||
+          differs(getArmSetting(weaponId, side, "offset_x", 0), 0) ||
+          differs(getArmSetting(weaponId, side, "offset_y", 0), 0) ||
+          differs(getArmSetting(weaponId, side, "offset_z", 0), 0) ||
+          differs(getArmSetting(weaponId, side, "rotation_x", 0), 0) ||
+          differs(getArmSetting(weaponId, side, "rotation_y", 0), 0) ||
+          differs(getArmSetting(weaponId, side, "rotation_z", 0), 0);
+      }
+
+      weaponCustomizationActive = weaponChanged || armChanged;
+      syncWeaponFrameTicker();
+    };
 
     let globalFrameId = 0;
+    let weaponFrameRAF = null;
     const bumpGlobalFrame = () => {
       globalFrameId++;
-      requestAnimationFrame(bumpGlobalFrame);
+      if (weaponCustomizationActive || inspectStart !== null) {
+        weaponFrameRAF = requestAnimationFrame(bumpGlobalFrame);
+      } else {
+        weaponFrameRAF = null;
+      }
     };
-    requestAnimationFrame(bumpGlobalFrame);
+    syncWeaponFrameTicker = () => {
+      const needed = weaponCustomizationActive || inspectStart !== null;
+      if (needed && weaponFrameRAF === null) {
+        weaponFrameRAF = requestAnimationFrame(bumpGlobalFrame);
+      } else if (!needed && weaponFrameRAF !== null) {
+        cancelAnimationFrame(weaponFrameRAF);
+        weaponFrameRAF = null;
+      }
+    };
+    recomputeWeaponHookState();
 
     const applyZSpin = (mat, angle) => {
       const cos = Math.cos(angle),
@@ -1659,6 +1908,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (document.querySelector("input:focus")) return;
         inspectStart = performance.now();
         inspectingWeaponId = domWeaponId || null;
+        syncWeaponFrameTicker();
         e.preventDefault();
       }
     };
@@ -1729,6 +1979,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       let lastClearMask = 0;
 
       let pendingRestoreTex = undefined;
+      let lastUploadedColor = 0xffffff;
+      const bindColorTexture = () => {
+        origBindTexture(gl.TEXTURE_2D, rgbTexture);
+        const packedColor = (rgbPixel[0] << 16) | (rgbPixel[1] << 8) | rgbPixel[2];
+        if (packedColor === lastUploadedColor) return;
+        lastUploadedColor = packedColor;
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+      };
 
       const origClear = gl.clear.bind(gl);
       gl.clear = (mask) => {
@@ -1738,6 +1996,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       gl.uniformMatrix4fv = (location, transpose, data, srcOffset, srcLength) => {
         activeThisFrame = false;
+
+        // With stock weapon/arm settings, avoid all signature strings, matrix
+        // copies, square roots, and texture checks on this WebGL hot path.
+        if (!weaponCustomizationActive && inspectStart === null) {
+          return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
+        }
 
         const now = performance.now();
         if (now !== lastFrameTime) {
@@ -1789,6 +2053,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             if (inspectStart !== null && inspectingWeaponId !== null && inspectingWeaponId !== currentWeaponId) {
               inspectStart = null;
               inspectingWeaponId = null;
+              syncWeaponFrameTicker();
             }
 
             const base = getWeaponSetting(currentWeaponId, "size", 1.0);
@@ -1827,8 +2092,7 @@ window.addEventListener("DOMContentLoaded", async () => {
                 rgbPixel[2] = Number.isNaN(bVal) ? 255 : bVal;
                 rgbPixel[3] = 255;
               }
-              origBindTexture(gl.TEXTURE_2D, rgbTexture);
-              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+              bindColorTexture();
             }
 
             if (inspectStart !== null && inspectingWeaponId === null) {
@@ -1852,10 +2116,12 @@ window.addEventListener("DOMContentLoaded", async () => {
                 if (t >= 1.0) {
                   inspectStart = null;
                   inspectingWeaponId = null;
+                  syncWeaponFrameTicker();
                 }
               } else {
                 inspectStart = null;
                 inspectingWeaponId = null;
+                syncWeaponFrameTicker();
               }
             }
 
@@ -1872,13 +2138,12 @@ window.addEventListener("DOMContentLoaded", async () => {
             matBuf[13] += oy;
             matBuf[14] += oz;
 
-            applyMappedRotation(
-              matBuf,
-              currentWeaponId,
-              getWeaponSetting(currentWeaponId, "rotation_x", 0),
-              getWeaponSetting(currentWeaponId, "rotation_y", 0),
-              getWeaponSetting(currentWeaponId, "rotation_z", 0),
-            );
+            const weaponRotX = getWeaponSetting(currentWeaponId, "rotation_x", 0);
+            const weaponRotY = getWeaponSetting(currentWeaponId, "rotation_y", 0);
+            const weaponRotZ = getWeaponSetting(currentWeaponId, "rotation_z", 0);
+            if (weaponRotX !== 0 || weaponRotY !== 0 || weaponRotZ !== 0) {
+              applyMappedRotation(matBuf, currentWeaponId, weaponRotX, weaponRotY, weaponRotZ);
+            }
 
             if (spinZAngle !== 0) applyZSpin(matBuf, spinZAngle);
             if (spinXAngle !== 0) applyXSpin(matBuf, spinXAngle);
@@ -1951,13 +2216,12 @@ window.addEventListener("DOMContentLoaded", async () => {
             matBuf[13] += oy;
             matBuf[14] += oz;
 
-            applyMappedRotation(
-              matBuf,
-              currentWeaponId,
-              getArmSetting(currentWeaponId, armType, "rotation_x", 0),
-              getArmSetting(currentWeaponId, armType, "rotation_y", 0),
-              getArmSetting(currentWeaponId, armType, "rotation_z", 0),
-            );
+            const armRotX = getArmSetting(currentWeaponId, armType, "rotation_x", 0);
+            const armRotY = getArmSetting(currentWeaponId, armType, "rotation_y", 0);
+            const armRotZ = getArmSetting(currentWeaponId, armType, "rotation_z", 0);
+            if (armRotX !== 0 || armRotY !== 0 || armRotZ !== 0) {
+              applyMappedRotation(matBuf, currentWeaponId, armRotX, armRotY, armRotZ);
+            }
 
             if (armSpinX !== 0) applyXSpin(matBuf, armSpinX);
             if (armSpinY !== 0) applyYSpin(matBuf, armSpinY);
@@ -1989,8 +2253,7 @@ window.addEventListener("DOMContentLoaded", async () => {
                 rgbPixel[2] = Number.isNaN(bVal) ? 255 : bVal;
                 rgbPixel[3] = 255;
               }
-              origBindTexture(gl.TEXTURE_2D, rgbTexture);
-              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+              bindColorTexture();
             }
 
             if (armWireframe) activeThisFrame = true;
@@ -2643,14 +2906,19 @@ window.addEventListener("DOMContentLoaded", async () => {
         let intervalId = null;
 
         const updatePing = async () => {
+          if (!settings.lobby_ping || !pingEl.isConnected || window.location.href !== base_url) {
+            clearInterval(intervalId);
+            if (!settings.lobby_ping) pingEl.remove();
+            return;
+          }
           if (running) return;
           running = true;
           const region = regionEl.textContent.trim();
           const ms = await ipcRenderer.invoke("ping-url", `https://${region}.kirka.io`);
 
-          if (!settings.lobby_ping) {
+          if (!settings.lobby_ping || !pingEl.isConnected || window.location.href !== base_url) {
             clearInterval(intervalId);
-            pingEl.remove();
+            if (!settings.lobby_ping) pingEl.remove();
             running = false;
             return;
           }
@@ -2674,8 +2942,10 @@ window.addEventListener("DOMContentLoaded", async () => {
           running = false;
         };
 
+        // Region latency does not change meaningfully every second. Five
+        // seconds cuts IPC + network wakeups by 80% while keeping it live.
+        intervalId = setInterval(updatePing, 5000);
         updatePing();
-        intervalId = setInterval(updatePing, 1000);
       });
       addLobbyPing();
 
@@ -2940,21 +3210,17 @@ window.addEventListener("DOMContentLoaded", async () => {
         });
       };
 
-      const interval = setInterval(() => {
-        const moneys = document.querySelectorAll(".moneys > .card-cont");
-        const expValues = document.querySelector(".exp-values");
-        const quests = document.querySelectorAll(".right-interface > .quests .quest");
-        const questsTabs = document.querySelector(".right-interface > .quests .tabs");
-
-        if (moneys.length && expValues && quests.length && questsTabs) {
-          clearInterval(interval);
-          moneys.forEach(formatMoney);
-          formatExpValues(expValues);
-          formatQuests();
-
+      waitForElement(".moneys > .card-cont", () => {
+        document.querySelectorAll(".moneys > .card-cont").forEach(formatMoney);
+      });
+      waitForElement(".exp-values", formatExpValues);
+      waitForElement(".right-interface > .quests .tabs", (questsTabs) => {
+        formatQuests();
+        if (!questsTabs.dataset.dawnFormatBound) {
+          questsTabs.dataset.dawnFormatBound = "true";
           questsTabs.addEventListener("click", formatQuests);
         }
-      }, 100);
+      });
     };
 
     waitForElement(".avatar-info .username", applyLobbyChanges);
@@ -3337,31 +3603,20 @@ window.addEventListener("DOMContentLoaded", async () => {
         });
     };
 
-    let loading = null;
-    let polling = null;
+    let cancelProfileWait = () => {};
 
     const run = () => {
-      clearTimeout(loading);
-      clearTimeout(polling);
-
-      loading = setTimeout(() => {
-        const tryApply = () => {
-          const profile = document.querySelector(".tab-content .statistics");
-          if (profile) {
-            const profileCont = document.querySelector(".tab-content > .profile-cont > .profile");
-            if (profileCont?.dataset.applied) return;
-            if (profileCont) profileCont.dataset.applied = "true";
-            addKTiersIcon();
-            addNicknameButton();
-            applyCustomizations();
-            applyCardChanges();
-            addClanListener();
-          } else {
-            polling = setTimeout(tryApply, 10);
-          }
-        };
-        tryApply();
-      }, 0);
+      cancelProfileWait();
+      cancelProfileWait = waitForElement(".tab-content .statistics", () => {
+        const profileCont = document.querySelector(".tab-content > .profile-cont > .profile");
+        if (profileCont?.dataset.applied) return;
+        if (profileCont) profileCont.dataset.applied = "true";
+        addKTiersIcon();
+        addNicknameButton();
+        applyCustomizations();
+        applyCardChanges();
+        addClanListener();
+      });
     };
 
     run();
@@ -3369,6 +3624,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const obs = observeForElement(".tab-content", run);
 
     disconnectObservers = () => {
+      cancelProfileWait();
       obs?.disconnect();
     };
   };
@@ -3376,7 +3632,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   observeForElement("#profile-modal-modal", handleProfile);
 
   const handleInGame = () => {
-    if (!document.querySelector(".desktop-game-interface")) return;
+    const gameInterface = document.querySelector(".desktop-game-interface");
+    if (!gameInterface || gameInterface.dataset.dawnInitialized === "true") return;
+    // SPA URL events can fire repeatedly for one match. Mark the actual game
+    // interface node so we do not stack duplicate observers and key listeners.
+    // A new match gets a new node and initializes normally.
+    gameInterface.dataset.dawnInitialized = "true";
     const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
 
     document.addEventListener(
@@ -4367,14 +4628,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    let lastUrl = window.location.href;
-    new MutationObserver(() => {
-      if (window.location.href !== lastUrl) {
-        lastUrl = window.location.href;
-        observers.forEach((o) => o.disconnect());
-        observers.clear();
-      }
-    }).observe(document, { subtree: true, childList: true });
+    const initializedUrl = window.location.href;
+    const cleanupShortIdObservers = ({ detail: nextUrl }) => {
+      if (!nextUrl || nextUrl === initializedUrl) return;
+      observers.forEach((observer) => observer.disconnect());
+      observers.clear();
+      window.removeEventListener("url-changed", cleanupShortIdObservers);
+    };
+    window.addEventListener("url-changed", cleanupShortIdObservers);
 
     observeShortIds();
     applyCustomizationsEsc();
@@ -4481,54 +4742,52 @@ window.addEventListener("DOMContentLoaded", async () => {
       }).observe(bottomLeft, { childList: true });
     }
 
-    const warmupTimer = document.querySelector(".warmup-timer");
-    if (!warmupTimer) {
+    const observeElement = (selector, setting, execute) => {
+      const elem = document.querySelector(selector);
+      if (!elem) return;
+      new MutationObserver(() => {
+        if (setting()) execute();
+      }).observe(elem, { childList: true });
+    };
+
+    const activateMatchObservers = (afterWarmup = false) => {
+      if (afterWarmup) {
+        red_players = [];
+        blue_players = [];
+        assistsCount = 0;
+        headshotsCount = 0;
+        objectivesCount = 0;
+      }
       updatePlayerLists();
       updateMessages();
       updateTeammates();
-      const observeElement = (selector, setting, execute) => {
-        const elem = document.querySelector(selector);
-        if (!elem) return;
-        new MutationObserver(() => {
-          if (setting()) execute();
-        }).observe(elem, { childList: true });
-      };
-
+      if (afterWarmup) {
+        applyCustomizationsTab();
+        const hsp = document.querySelector(".kill-death .hsp");
+        if (hsp) {
+          hsp.remove();
+          createHeadshots();
+        }
+      }
       observeElement(".kill-bar-cont", () => settings.colored_killfeed, updateKillFeed);
       observeElement(".teammates-list", () => settings.customizations, updateTeammates);
       attachChatObserver();
-      return;
-    } else {
-      const warmupInterval = setInterval(() => {
-        if (!document.querySelector(".warmup-timer")) {
-          clearInterval(warmupInterval);
-          red_players = [];
-          blue_players = [];
-          assistsCount = 0;
-          headshotsCount = 0;
-          objectivesCount = 0;
-          updatePlayerLists();
-          updateMessages();
-          updateTeammates();
-          applyCustomizationsTab();
-          if (document.querySelector(".kill-death .hsp")) {
-            document.querySelector(".kill-death .hsp").remove();
-            createHeadshots();
-          }
-          const observeElement = (selector, setting, execute) => {
-            const elem = document.querySelector(selector);
-            if (!elem) return;
-            new MutationObserver(() => {
-              if (setting()) execute();
-            }).observe(elem, { childList: true });
-          };
+    };
 
-          observeElement(".kill-bar-cont", () => settings.colored_killfeed, updateKillFeed);
-          observeElement(".teammates-list", () => settings.customizations, updateTeammates);
-          attachChatObserver();
-        }
-      }, 1000);
+    const warmupTimer = document.querySelector(".warmup-timer");
+    if (!warmupTimer) {
+      activateMatchObservers();
+      return;
     }
+
+    // Warm-up completion is a DOM event, not a clock. The former one-second
+    // poll could linger when a match was abandoned before warm-up ended.
+    const warmupObserver = new MutationObserver(() => {
+      if (warmupTimer.isConnected) return;
+      warmupObserver.disconnect();
+      if (gameInterface.isConnected) activateMatchObservers(true);
+    });
+    warmupObserver.observe(gameInterface, { childList: true, subtree: true });
   };
 
   const handleClans = () => {
@@ -4956,14 +5215,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   };
 
-  const handleMarket = () => {
-    const interval = setInterval(() => {
-      if (!window.location.href.startsWith(`${base_url}hub/market`)) {
-        clearInterval(interval);
-        return;
-      }
-    }, 250);
-  };
+  // Market features are mutation-driven below; the old handler woke four
+  // times a second only to check the URL and perform no work.
+  const handleMarket = () => {};
+
+  let friendsSpectateObserver = null;
+  let friendsRefreshRAF = null;
+  window.addEventListener("url-changed", ({ detail: url }) => {
+    if (String(url).startsWith(`${base_url}friends`)) return;
+    if (friendsSpectateObserver) friendsSpectateObserver.disconnect();
+    friendsSpectateObserver = null;
+    if (friendsRefreshRAF !== null) cancelAnimationFrame(friendsRefreshRAF);
+    friendsRefreshRAF = null;
+  });
 
   const handleFriends = () => {
     const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
@@ -5223,17 +5487,28 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    const interval = setInterval(() => {
-      if (!window.location.href.startsWith(`${base_url}friends`)) {
-        clearInterval(interval);
-        return;
-      }
-
+    const refreshSpectateButtons = () => {
+      friendsRefreshRAF = null;
+      if (!window.location.href.startsWith(`${base_url}friends`)) return;
       document.querySelectorAll(".friend").forEach((div) => {
         if (div.querySelector(".online")?.textContent.includes("in game")) addSpectateButton(div.querySelector(".online"));
         else div.querySelector(".spectate-eye")?.remove();
       });
-    }, 250);
+    };
+
+    const scheduleSpectateRefresh = () => {
+      if (friendsRefreshRAF !== null) return;
+      friendsRefreshRAF = requestAnimationFrame(refreshSpectateButtons);
+    };
+
+    if (friendsSpectateObserver) friendsSpectateObserver.disconnect();
+    friendsSpectateObserver = new MutationObserver(scheduleSpectateRefresh);
+    friendsSpectateObserver.observe(friendsList, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    scheduleSpectateRefresh();
 
     if (!addFriends.querySelector(".search-friends")) createSearch();
     if (!addFriends.querySelector(".player-lookup")) createPlayerLookup();
