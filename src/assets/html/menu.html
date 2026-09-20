@@ -866,18 +866,19 @@
             </select>
           </div>
         </div>
-        <div class="option"><div class="left"><span>Sim Tick</span><span class="description">Overclocks the engine's tick (bhop + interp) without a fancy monitor. World running 2× fast? Drop back to 60.</span></div><div class="custom-select">
+        <div class="option"><div class="left"><span>Sim Tick</span><span class="description">480 Hz is the measured old-client path. 960 Hz Turbo uses the M4's spare CPU headroom; drop back if movement timing feels wrong.</span></div><div class="custom-select">
             <select id="logic_tick_rate" data-setting="logic_tick_rate">
               <option value="60">60 Hz (stock)</option>
               <option value="120">120 Hz</option>
               <option value="240">240 Hz</option>
               <option value="480">480 Hz (old-client feel)</option>
+              <option value="960">960 Hz (M4 Turbo)</option>
             </select>
           </div>
         </div>
-        <div class="option"><div class="left"><span>Interp Delay</span><span class="description">How far behind server time enemies render. Lower = snappier but twitchy. Higher = buttery. 75ms is the ranked default.</span></div><div class="right">
+        <div class="option"><div class="left"><span>Interp Delay</span><span class="description">33ms keeps one server snapshot for the lowest enemy-render latency; 66/99ms are smoother when the connection jitters.</span></div><div class="right">
             <input type="text" placeholder="75" maxlength="3" class="value interp-delay" data-setting="interp_delay_ms" />
-            <input type="range" min="50" max="200" step="5" class="range interp-delay" data-setting="interp_delay_ms" />
+            <input type="range" min="33" max="200" step="1" class="range interp-delay" data-setting="interp_delay_ms" />
           </div>
         </div>
         <div class="option"><div class="left requires-restart"><span>Compositor Profile</span><span class="description">Bench-lab for frame pacing. stock is the smooth verified ride; uncap* uncorks the old client's flags — can look worse, so test with your eyes.</span></div><div class="custom-select">
@@ -924,6 +925,11 @@
       </div>
       <div class="option-group wide">
 <div class="group-title">Smart Modes</div>
+        <div class="option"><div class="left"><span>Performance Lock</span><span class="description">Prevents macOS App Nap from parking game and network timers while another desktop is visible. The display can still sleep.</span></div><div class="switch">
+            <input type="checkbox" id="performance_mode" data-setting="performance_mode" />
+            <label for="performance_mode"></label>
+          </div>
+        </div>
         <div class="option requires-restart">
           <span>Auto Fullscreen</span>
           <div class="checkbox">
@@ -931,7 +937,7 @@
             <label for="auto_fullscreen"></label>
           </div>
         </div>
-        <div class="option"><div class="left"><span>Thermal Guard</span><span class="description">M4 Air has no fan. CPU pinned 80%+ for ~30s mid-match? It downshifts your tick (480→240→120) till it cools, then re-ups after ~3 min. No thermal throttle, gg.</span></div><div class="switch">
+        <div class="option"><div class="left"><span>Thermal Guard</span><span class="description">M4 Air has no fan. CPU pinned 80%+ for ~30s mid-match? It downshifts your tick (960→480→240) and restores it after cooling.</span></div><div class="switch">
             <input type="checkbox" id="thermal_guard" data-setting="thermal_guard" />
             <label for="thermal_guard"></label>
           </div>

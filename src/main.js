@@ -1,7 +1,7 @@
 // Capture startup before loading Electron integrations and native modules.
 const _mainStartedAt = Date.now();
 
-const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net, screen } = require("electron");
+const { app, BrowserWindow, session, protocol, ipcMain, globalShortcut, clipboard, dialog, shell, net, screen, powerSaveBlocker } = require("electron");
 const { applySwitches } = require("./util/switches");
 const { default_settings, allowed_urls } = require("./util/defaults.json");
 const path = require("path");
@@ -66,6 +66,45 @@ if (startupSettingsChanged) store.set("settings", settings);
 let gameWindow = null;
 let splashWindow = null;
 const getGameWindow = () => gameWindow;
+
+// Performance Lock is intentionally owned entirely by the main process. It
+// prevents macOS App Nap from parking the game/network timers when another
+// Space is visible, while still allowing the display itself to sleep.
+let _performanceBlockerId = null;
+const syncPerformanceLock = () => {
+  if (!app.isReady()) return;
+  const enabled = settings.performance_mode !== false;
+  try {
+    const running = _performanceBlockerId !== null && powerSaveBlocker.isStarted(_performanceBlockerId);
+    if (enabled && !running) {
+      _performanceBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+      console.log(`[power] Performance Lock active (${_performanceBlockerId})`);
+    } else if (!enabled && _performanceBlockerId !== null) {
+      if (running) powerSaveBlocker.stop(_performanceBlockerId);
+      _performanceBlockerId = null;
+      console.log("[power] Performance Lock disabled");
+    }
+  } catch (error) {
+    console.warn("[power] Performance Lock failed:", error.message);
+    _performanceBlockerId = null;
+  }
+};
+const stopPerformanceLock = () => {
+  if (_performanceBlockerId === null) return;
+  try {
+    if (powerSaveBlocker.isStarted(_performanceBlockerId)) {
+      powerSaveBlocker.stop(_performanceBlockerId);
+    }
+  } catch (error) {}
+  _performanceBlockerId = null;
+};
+const isPerformanceLockActive = () => {
+  try {
+    return _performanceBlockerId !== null && powerSaveBlocker.isStarted(_performanceBlockerId);
+  } catch (error) {
+    return false;
+  }
+};
 
 // One instance per launch — two clients writing to the same bundle cache /
 // settings would fight each other.
@@ -136,13 +175,13 @@ ipcMain.on("get-settings", (e) => { e.returnValue = settings; });
 const applyFrameCap = () => {
   if (!gameWindow || gameWindow.isDestroyed()) return;
   const cap = Number(settings.fps_cap) || 0;
-  if (cap === 0) return;
   try {
-    const displayHz = Math.round(screen.getPrimaryDisplay().displayFrequency) || 60;
-    const eff = Math.min(cap, displayHz);
-    if (eff > 0 && eff < displayHz) {
-      gameWindow.webContents.setFrameRate(eff);
-    }
+    const display = screen.getDisplayMatching(gameWindow.getBounds());
+    const displayHz = Math.round(display?.displayFrequency) || 60;
+    const effectiveHz = cap > 0 ? Math.min(cap, displayHz) : displayHz;
+    // Always write the effective value. Previously selecting 30 FPS and then
+    // returning to "No cap" left WebContents pinned at 30 until a restart.
+    gameWindow.webContents.setFrameRate(effectiveHz);
   } catch (e) {}
 };
 
@@ -182,6 +221,7 @@ const _setSetting = (key, value) => {
   if (key === "fps_cap") value = Number(value) || 0;
   settings[key] = value;
   if (key === "fps_cap") applyFrameCap();
+  if (key === "performance_mode") syncPerformanceLock();
   if (gameWindow && !gameWindow.isDestroyed()) {
     gameWindow.webContents.send("settings-updated", settings);
   }
@@ -915,6 +955,9 @@ const createWindow = () => {
     backgroundColor: "#141414",
   });
   _perf("game window created");
+  try {
+    gameWindow.webContents.setBackgroundThrottling(false);
+  } catch (error) {}
 
   gameWindow.webContents.once("dom-ready", () => _perf("game dom ready"));
   gameWindow.once("ready-to-show", () => {
@@ -1342,6 +1385,8 @@ const _finishPerformanceBenchmark = async (benchmark) => {
       highRateMouse: settings.high_rate_mouse !== false,
       unadjustedMouse: settings.raw_mouse_input === true,
       interpolationDelayMs: Number(settings.interp_delay_ms) || 75,
+      performanceMode: settings.performance_mode !== false,
+      performanceLockActive: isPerformanceLockActive(),
       thermalGuard: settings.thermal_guard !== false,
       highRefreshAuto: settings.high_refresh_auto !== false,
     },
@@ -1584,8 +1629,8 @@ const _TG_HIGH_CPU = 80;      // step DOWN above this
 const _TG_LOW_CPU = 50;       // step UP below this
 const _TG_HIGH_TICKS = 3;     // N consecutive high samples before stepping down (~30s)
 const _TG_LOW_TICKS = 18;     // N consecutive low samples before restoring (~180s)
-const _TG_TICK_DOWN = ["480", "240", "120", "60"];
-const _TG_TICK_UP = ["60", "120", "240", "480"];
+const _TG_TICK_DOWN = ["960", "480", "240", "120", "60"];
+const _TG_TICK_UP = ["60", "120", "240", "480", "960"];
 let _tgHighTicks = 0;
 let _tgLowTicks = 0;
 let _tgTimer = null;
@@ -1697,6 +1742,7 @@ app.on("ready", () => {
     screen.on("display-removed", () => applyHighRefreshPath());
     screen.on("display-metrics-changed", () => applyHighRefreshPath());
   } catch (e) {}
+  syncPerformanceLock();
   initGame();
   try { os.setPriority(process.pid, -10); } catch (e) {}
   try {
@@ -1738,6 +1784,7 @@ app.on("child-process-gone", (_, details) => {
 });
 
 app.on("before-quit", () => {
+  stopPerformanceLock();
   releaseSyntheticKeys();
   globalShortcut.unregisterAll();
   // Flush any debounced settings write so the last change isn't lost.
