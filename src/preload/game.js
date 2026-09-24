@@ -34,8 +34,15 @@ sanitizeBlockRgbSettings();
 
 const { summarizeFrameTimes } = require("../util/perf-metrics");
 const { createAdaptiveInterpolation } = require("./game/adaptive-interpolation");
+const { createAssetPrewarmer } = require("./game/asset-prewarm");
+const { compileCustomizationState } = require("./game/customization-state");
+const { createDataIndex, STORAGE_KEYS } = require("./game/data-index");
+const { createIdleWorkQueue } = require("./game/idle-work");
 const { NumericMatrixDeduper, scaleSignatureKey } = require("./game/matrix-fingerprint");
+const { createMutationBatcher } = require("./game/mutation-batcher");
 const { installRawMouse } = require("./game/raw-mouse");
+const { installRenderScale } = require("./game/render-scale");
+const { RuntimeScope } = require("./game/runtime-scope");
 const { prewarmWebGLContext } = require("./game/shader-prewarm");
 const { createSimulationClock } = require("./game/simulation-clock");
 
@@ -225,6 +232,12 @@ const _finishBenchmarkCapture = () => {
     simulation: window.__dawnSimulationClock?.getStats() ?? null,
     interpolation: window.__dawnInterpolation?.getStats() ?? null,
     shaderPrewarm: window.__dawnShaderPrewarm ?? null,
+    renderScale: window.__dawnRenderScale?.getStats() ?? null,
+    assetPrewarm: window.__dawnAssetPrewarmer?.getStats() ?? null,
+    dataIndex: window.__dawnDataIndex?.getStats() ?? null,
+    matchRuntime: window.__dawnMatchRuntime?.getStats() ?? null,
+    matchMutations: window.__dawnMatchMutationBatch?.getStats() ?? null,
+    idleStartup: window.__dawnIdleWork?.getStats() ?? null,
     visibilityState: document.visibilityState,
   };
 };
@@ -281,6 +294,7 @@ function toggleFrameTimeLogger() {
 
   _startTelemetry("overlay");
   const sample = () => {
+    if (document.visibilityState === "hidden") return;
     const stats = window.__dawnTelemetry.getStats();
     if (!stats.ready || !_frameTimeOverlay) return;
 
@@ -321,6 +335,10 @@ function toggleFrameTimeLogger() {
       lines.push(`Mouse raw ${mouse.rawHz || 0}Hz  native ${mouse.nativeMouseHz || 0}Hz  bridge ${bridge}`);
       lines.push(`Mouse profile ${mouse.pollingRateHz || 0}Hz / ${mouse.reconciliationWindowMs || 0}ms  acceleration ${mouse.unadjustedEnabled ? mouse.unadjusted.status : "OS-adjusted"}`);
     }
+    const renderScale = window.__dawnRenderScale?.getStats();
+    const matchMutations = window.__dawnMatchMutationBatch?.getStats();
+    if (renderScale) lines.push(`3D scale ${renderScale.scalePercent}%  viewport maps ${renderScale.scaledViewportCalls}`);
+    if (matchMutations) lines.push(`UI batches ${matchMutations.flushes}  coalesced ${matchMutations.coalescedMarks}`);
     _frameTimeOverlay.textContent = lines.join("\n");
   };
   sample();
@@ -350,6 +368,36 @@ const scriptsPath = ipcRenderer.sendSync("get-scripts-path");
 const scripts = scriptsPath && fs.existsSync(scriptsPath) ? fs.readdirSync(scriptsPath) : [];
 
 const settings = ipcRenderer.sendSync("get-settings");
+
+// Long-lived read-through indexes remove repeated localStorage JSON parsing and
+// linear customization searches from match mutation callbacks.
+window.__dawnDataIndex = createDataIndex(localStorage);
+window.addEventListener("storage", (event) => {
+  window.__dawnDataIndex.invalidate(event.key);
+});
+
+// Install before the game asks for its WebGL context. At 100% this is an exact
+// no-op; lower values reduce only the 3D backing buffer while keeping DOM UI at
+// native resolution.
+window.__dawnRenderScale = installRenderScale({
+  windowObject: window,
+  getScale: () => settings.render_scale,
+});
+
+const startupIdleQueue = createIdleWorkQueue({ scope: window });
+window.__dawnIdleWork = startupIdleQueue;
+const assetPrewarmer = createAssetPrewarmer({
+  windowObject: window,
+  documentObject: document,
+  extraUrls: () => [
+    settings.hitmarker_link,
+    settings.killicon_link,
+    settings.crosshair_link,
+    settings.menu_background,
+  ].filter(Boolean),
+});
+window.__dawnAssetPrewarmer = assetPrewarmer;
+
 // Keep this in-process copy live — main broadcasts the full settings
 // object on every change. Reading from it avoids a blocking sendSync
 // round-trip on every call (several pollers paid one per second).
@@ -362,8 +410,20 @@ const applyTimingSettings = (updated = settings) => {
 };
 ipcRenderer.on("settings-updated", (_event, updated) => {
   if (!updated) return;
+  const previousScale = settings.render_scale;
+  const previousPrewarm = settings.asset_prewarm;
+  const previousSuspend = settings.suspend_cosmetics_in_background;
   Object.assign(settings, updated);
   applyTimingSettings(settings);
+  if (settings.render_scale !== previousScale) window.__dawnRenderScale?.update(settings.render_scale);
+  if (settings.asset_prewarm !== previousPrewarm) {
+    if (settings.asset_prewarm === false) assetPrewarmer.cancel();
+    else assetPrewarmer.start();
+  }
+  if (settings.suspend_cosmetics_in_background !== previousSuspend) {
+    if (settings.suspend_cosmetics_in_background === false) resumeCosmeticWork();
+    else if (document.visibilityState === "hidden") suspendCosmeticWork();
+  }
 });
 
 // Install before the page bundle executes so its mousemove listener receives
@@ -419,7 +479,6 @@ const resetRuntimeTiming = () => {
   window.__dawnMouseInput?.reset?.();
   if (Array.isArray(window.__dawnTickSamples)) window.__dawnTickSamples.length = 0;
   _telemetryLastT = _telemetryConsumers.size ? timestamp : 0;
-  window.dispatchEvent(new CustomEvent("dawn-runtime-resume"));
 };
 
 ipcRenderer.on("display-profile", (_event, profile) => {
@@ -427,10 +486,44 @@ ipcRenderer.on("display-profile", (_event, profile) => {
   if (Number.isFinite(hz) && hz >= 30) window.__dawnDisplayHz = hz;
   window.__dawnSimulationClock?.reset(performance.now());
 });
-ipcRenderer.on("dawn-focus-reset", resetRuntimeTiming);
-window.addEventListener("focus", resetRuntimeTiming, true);
+
+let cosmeticsSuspended = false;
+const suspendCosmeticWork = () => {
+  if (settings.suspend_cosmetics_in_background === false) return;
+  if (cosmeticsSuspended) {
+    document.body?.classList.add("dawn-background-suspended");
+    return;
+  }
+  cosmeticsSuspended = true;
+  document.body?.classList.add("dawn-background-suspended");
+  window.__dawnMatchRuntime?.suspend?.();
+  startupIdleQueue.suspend();
+  assetPrewarmer.cancel();
+  window.dispatchEvent(new CustomEvent("dawn-runtime-suspend"));
+};
+const resumeCosmeticWork = () => {
+  if (!cosmeticsSuspended) return;
+  cosmeticsSuspended = false;
+  document.body?.classList.remove("dawn-background-suspended");
+  window.__dawnMatchRuntime?.resume?.();
+  startupIdleQueue.resume();
+  if (settings.asset_prewarm !== false) assetPrewarmer.resume();
+  window.dispatchEvent(new CustomEvent("dawn-runtime-resume"));
+};
+const resumeRuntimeTiming = () => {
+  if (document.visibilityState === "visible" || settings.suspend_cosmetics_in_background === false) {
+    resumeCosmeticWork();
+  }
+  if (document.visibilityState === "visible" && settings.asset_prewarm !== false) assetPrewarmer.resume();
+  resetRuntimeTiming();
+};
+
+ipcRenderer.on("dawn-focus-reset", resumeRuntimeTiming);
+window.addEventListener("blur", suspendCosmeticWork, true);
+window.addEventListener("focus", resumeRuntimeTiming, true);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") resetRuntimeTiming();
+  if (document.visibilityState === "visible") resumeRuntimeTiming();
+  else suspendCosmeticWork();
 }, true);
 
 const base_url = settings.base_url;
@@ -526,6 +619,14 @@ const originalConsole = {
 };
 
 window.addEventListener("DOMContentLoaded", async () => {
+  const backgroundPauseStyle = document.createElement("style");
+  backgroundPauseStyle.id = "dawn-background-pause-style";
+  backgroundPauseStyle.textContent = ".dawn-background-suspended *{animation-play-state:paused!important}";
+  document.head?.appendChild(backgroundPauseStyle);
+  if (document.visibilityState === "hidden" && settings.suspend_cosmetics_in_background !== false) {
+    suspendCosmeticWork();
+  }
+
   console.log = originalConsole.log;
   console.warn = originalConsole.warn;
   console.error = originalConsole.error;
@@ -538,10 +639,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   installBhopHook(() => settings);
   window.__dawnBhopMult = Number(settings.bhop_mult) || 1.5;
 
-  opener();
+  // Input/menu hooks stay immediate; lobby-only helpers are staged into idle
+  // slices so they cannot contend with the game bundle's first parse/paint.
   customReqScripts(settings);
-  editResourceSwapper();
-  initGallery();
+  startupIdleQueue.add(opener);
+  startupIdleQueue.add(editResourceSwapper);
+  startupIdleQueue.add(initGallery);
 
   const fetchAll = async () => {
     try {
@@ -568,8 +671,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       ]);
 
       const shortId = localStorage.getItem("user-id");
-      const existingLocal = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
-      const localEntry = Array.isArray(existingLocal) ? existingLocal.find((c) => c.shortId === shortId) : null;
+      const localEntry = window.__dawnDataIndex.customization(shortId);
 
       if (localEntry && settings.local_customizations && Array.isArray(customizations)) {
         const globalEntryIndex = customizations.findIndex((c) => c.shortId === shortId);
@@ -580,14 +682,21 @@ window.addEventListener("DOMContentLoaded", async () => {
         }
       }
 
-      if (Array.isArray(customizations)) localStorage.setItem("juice-customizations", JSON.stringify(customizations));
-      if (Array.isArray(clan)) localStorage.setItem("juice-clans", JSON.stringify(clan));
+      if (Array.isArray(customizations)) {
+        localStorage.setItem("juice-customizations", JSON.stringify(customizations));
+        window.__dawnDataIndex.invalidate(STORAGE_KEYS.customizations);
+      }
+      if (Array.isArray(clan)) {
+        localStorage.setItem("juice-clans", JSON.stringify(clan));
+        window.__dawnDataIndex.invalidate(STORAGE_KEYS.clans);
+      }
       if (Array.isArray(ktiers)) localStorage.setItem("ktiers-list", JSON.stringify(ktiers));
     } catch (err) {
       console.warn("[Dawn] fetchAll handled error:", err);
     }
   };
-  fetchAll();
+  startupIdleQueue.add(fetchAll);
+  if (settings.asset_prewarm !== false) startupIdleQueue.add(() => assetPrewarmer.start());
 
   const formatLink = (link) => {
     if (!link) return "";
@@ -1422,6 +1531,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   const initWeaponMods = () => {
     const liveSettings = { ...settings };
     let weaponCustomizationActive = false;
+    let weaponWorkSuspended =
+      document.visibilityState === "hidden" && settings.suspend_cosmetics_in_background !== false;
     let recomputeWeaponHookState = () => {};
     let syncWeaponFrameTicker = () => {};
 
@@ -1430,12 +1541,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (v === undefined || v === null || v === "") return def;
       return v;
     };
-    const readNumber = (key, def) => {
-      const v = readSetting(key, def);
-      const n = parseFloat(v);
-      return isNaN(n) ? def : n;
-    };
-
     document.addEventListener("juice-settings-changed", ({ detail }) => {
       liveSettings[detail.setting] = detail.value;
       recomputeWeaponHookState();
@@ -1466,11 +1571,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       [tomahawkCollisionSig, "right"],
     ]);
 
-    const getWeaponSetting = (weaponId, name, def) => readNumber(`${weaponId}_weapon_${name}`, def);
-
-    const getArmSetting = (weaponId, side, name, def) => readNumber(`${weaponId}_${side}_arm_${name}`, def);
-
-    const getInspectDuration = (weaponId) => liveSettings[weaponId + "_inspect_duration"];
+    let compiledCustomization = compileCustomizationState(liveSettings, liveSettings.active_weapon || "vita");
+    let compiledWeaponInspect = null;
+    const compiledArmInspect = { left: null, right: null };
 
     const inspectKeyframes_vita = (t) => {
       const easeOut = (x) => 1 - Math.pow(1 - x, 3);
@@ -1802,9 +1905,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         }
       }
     });
-    const observedWeaponRoots = new WeakSet();
-    const observeWeaponRoot = (root) => {
-      if (!(root instanceof HTMLElement) || observedWeaponRoots.has(root)) return;
+    const observedWeaponRoots = new Set();
+    const observeWeaponRoot = (root, force = false) => {
+      if (!(root instanceof HTMLElement) || (observedWeaponRoots.has(root) && !force)) return;
       observedWeaponRoots.add(root);
       weaponSelectionObserver.observe(root, {
         attributes: true,
@@ -1820,6 +1923,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     // weapon roots; the body observer only processes newly inserted nodes.
     const weaponRootObserver = new MutationObserver((mutations) => {
       let foundRoot = false;
+      let prunedRoot = false;
+      for (const root of observedWeaponRoots) {
+        if (!root.isConnected) {
+          observedWeaponRoots.delete(root);
+          prunedRoot = true;
+        }
+      }
+      if (prunedRoot) {
+        weaponSelectionObserver.disconnect();
+        for (const root of observedWeaponRoots) observeWeaponRoot(root, true);
+      }
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
           if (!(node instanceof HTMLElement)) continue;
@@ -1836,35 +1950,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (foundRoot) updateDomWeaponId();
     });
     weaponRootObserver.observe(document.body, { childList: true, subtree: true });
+    if (weaponWorkSuspended) {
+      weaponSelectionObserver.disconnect();
+      weaponRootObserver.disconnect();
+    }
 
-    const differs = (value, baseline) => Math.abs(Number(value) - baseline) > 0.00001;
     recomputeWeaponHookState = () => {
-      const weaponId = domWeaponId || readSetting("active_weapon", "vita") || "vita";
-      const weaponChanged =
-        !!readSetting("weapon_wireframe", false) ||
-        !!readSetting("weapon_color", false) ||
-        differs(getWeaponSetting(weaponId, "size", 1), 1) ||
-        differs(getWeaponSetting(weaponId, "offset_x", 0), 0) ||
-        differs(getWeaponSetting(weaponId, "offset_y", 0), 0) ||
-        differs(getWeaponSetting(weaponId, "offset_z", 0), 0) ||
-        differs(getWeaponSetting(weaponId, "rotation_x", 0), 0) ||
-        differs(getWeaponSetting(weaponId, "rotation_y", 0), 0) ||
-        differs(getWeaponSetting(weaponId, "rotation_z", 0), 0);
-
-      let armChanged = !!readSetting("arm_wireframe", false) || !!readSetting("arm_color", false);
-      for (const side of ["left", "right"]) {
-        armChanged =
-          armChanged ||
-          differs(getArmSetting(weaponId, side, "size", 1), 1) ||
-          differs(getArmSetting(weaponId, side, "offset_x", 0), 0) ||
-          differs(getArmSetting(weaponId, side, "offset_y", 0), 0) ||
-          differs(getArmSetting(weaponId, side, "offset_z", 0), 0) ||
-          differs(getArmSetting(weaponId, side, "rotation_x", 0), 0) ||
-          differs(getArmSetting(weaponId, side, "rotation_y", 0), 0) ||
-          differs(getArmSetting(weaponId, side, "rotation_z", 0), 0);
-      }
-
-      weaponCustomizationActive = weaponChanged || armChanged;
+      const weaponId = domWeaponId || compiledCustomization.weaponId || readSetting("active_weapon", "vita") || "vita";
+      compiledCustomization = compileCustomizationState(liveSettings, weaponId);
+      compiledWeaponInspect = weaponIdToInspectKeyframes[compiledCustomization.weaponId] || null;
+      compiledArmInspect.left = armKeyframeMap[`${compiledCustomization.weaponId}_left`] || null;
+      compiledArmInspect.right = armKeyframeMap[`${compiledCustomization.weaponId}_right`] || null;
+      weaponCustomizationActive = compiledCustomization.active;
       syncWeaponFrameTicker();
     };
 
@@ -1872,14 +1969,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     let weaponFrameRAF = null;
     const bumpGlobalFrame = () => {
       globalFrameId++;
-      if (weaponCustomizationActive || inspectStart !== null) {
+      if (!weaponWorkSuspended && (weaponCustomizationActive || inspectStart !== null)) {
         weaponFrameRAF = requestAnimationFrame(bumpGlobalFrame);
       } else {
         weaponFrameRAF = null;
       }
     };
     syncWeaponFrameTicker = () => {
-      const needed = weaponCustomizationActive || inspectStart !== null;
+      const needed = !weaponWorkSuspended && (weaponCustomizationActive || inspectStart !== null);
       if (needed && weaponFrameRAF === null) {
         weaponFrameRAF = requestAnimationFrame(bumpGlobalFrame);
       } else if (!needed && weaponFrameRAF !== null) {
@@ -1887,6 +1984,23 @@ window.addEventListener("DOMContentLoaded", async () => {
         weaponFrameRAF = null;
       }
     };
+    window.addEventListener("dawn-runtime-suspend", () => {
+      weaponWorkSuspended = true;
+      weaponSelectionObserver.disconnect();
+      weaponRootObserver.disconnect();
+      syncWeaponFrameTicker();
+    });
+    window.addEventListener("dawn-runtime-resume", () => {
+      weaponWorkSuspended = false;
+      weaponRootObserver.observe(document.body, { childList: true, subtree: true });
+      for (const root of observedWeaponRoots) {
+        if (root.isConnected) observeWeaponRoot(root, true);
+        else observedWeaponRoots.delete(root);
+      }
+      document.querySelectorAll(".weapon-cont").forEach((root) => observeWeaponRoot(root, true));
+      updateDomWeaponId();
+      syncWeaponFrameTicker();
+    });
     recomputeWeaponHookState();
 
     const applyZSpin = (mat, angle) => {
@@ -1978,15 +2092,16 @@ window.addEventListener("DOMContentLoaded", async () => {
       tomahawk: { rx: "y", ry: "x", rz: "z" },
     };
 
-    const applyMappedRotation = (mat, weaponId, rotX, rotY, rotZ) => {
+    const applyAxisRotation = (mat, axis, angle) => {
+      if (axis === "x") applyXSpin(mat, angle);
+      else if (axis === "y") applyYSpin(mat, angle);
+      else applyZSpin(mat, angle);
+    };
+    const applyMappedRotation = (mat, weaponId, radX, radY, radZ) => {
       const map = WEAPON_AXIS_MAP[weaponId] || WEAPON_AXIS_MAP.vita;
-      const radX = (rotX * Math.PI) / 180;
-      const radY = (rotY * Math.PI) / 180;
-      const radZ = (rotZ * Math.PI) / 180;
-      const applyFunc = { x: applyXSpin, y: applyYSpin, z: applyZSpin };
-      applyFunc[map.rx](mat, radX);
-      applyFunc[map.ry](mat, radY);
-      applyFunc[map.rz](mat, radZ);
+      applyAxisRotation(mat, map.rx, radX);
+      applyAxisRotation(mat, map.ry, radY);
+      applyAxisRotation(mat, map.rz, radZ);
     };
 
     let currentInspectKeybind = readSetting("inspect_keybind", "KeyF");
@@ -2025,26 +2140,23 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     });
 
-    const hsvToRgb = (hue) => {
+    const writeHsvRgb = (hue, pixel) => {
       hue = ((hue % 360) + 360) % 360;
       const sector = Math.floor(hue / 60);
       const f = hue / 60 - sector;
       const q = Math.round((1 - f) * 255);
       const t = Math.round(f * 255);
-      switch (sector) {
-        case 0:
-          return [255, t, 0];
-        case 1:
-          return [q, 255, 0];
-        case 2:
-          return [0, 255, t];
-        case 3:
-          return [0, q, 255];
-        case 4:
-          return [t, 0, 255];
-        default:
-          return [255, 0, q];
-      }
+      let r = 255, g = 0, b = 0;
+      if (sector === 0) { g = t; }
+      else if (sector === 1) { r = q; g = 255; }
+      else if (sector === 2) { r = 0; g = 255; b = t; }
+      else if (sector === 3) { r = 0; g = q; b = 255; }
+      else if (sector === 4) { r = t; b = 255; }
+      else { b = q; }
+      pixel[0] = r;
+      pixel[1] = g;
+      pixel[2] = b;
+      pixel[3] = 255;
     };
 
     const colMag = (m, i) => Math.sqrt(m[i] * m[i] + m[i + 1] * m[i + 1] + m[i + 2] * m[i + 2]);
@@ -2064,6 +2176,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
       const matBuf = new Float32Array(16);
       const rgbPixel = new Uint8Array([255, 255, 255, 255]);
+      let lastRainbowFrameId = -1;
+      const updateRainbowPixel = (timestamp) => {
+        if (lastRainbowFrameId === globalFrameId) return;
+        lastRainbowFrameId = globalFrameId;
+        writeHsvRgb((timestamp / 3000) * 360, rgbPixel);
+      };
 
       const rgbTexture = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, rgbTexture);
@@ -2108,6 +2226,9 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (!weaponCustomizationActive && inspectStart === null) {
           return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
         }
+        const now = inspectStart !== null || compiledCustomization.weapon.rainbow || compiledCustomization.arms.left.rainbow
+          ? performance.now()
+          : 0;
 
         if (globalFrameId !== lastMatrixFrameId) {
           seenMatricesThisFrame.clear();
@@ -2150,7 +2271,8 @@ window.addEventListener("DOMContentLoaded", async () => {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
-            const currentWeaponId = domWeaponId;
+            const currentWeaponId = domWeaponId || compiledCustomization.weaponId || "vita";
+            const weaponConfig = compiledCustomization.weapon;
             window.currentWeaponId = currentWeaponId;
 
             if (inspectStart !== null && inspectingWeaponId !== null && inspectingWeaponId !== currentWeaponId) {
@@ -2159,20 +2281,19 @@ window.addEventListener("DOMContentLoaded", async () => {
               syncWeaponFrameTicker();
             }
 
-            const base = getWeaponSetting(currentWeaponId, "size", 1.0);
+            const base = weaponConfig.scale;
             matBuf.set(slice);
             let scale = base;
-            let ox = getWeaponSetting(currentWeaponId, "offset_x", 0);
-            let oy = getWeaponSetting(currentWeaponId, "offset_y", 0);
-            let oz = getWeaponSetting(currentWeaponId, "offset_z", 0);
+            let ox = weaponConfig.offsetX;
+            let oy = weaponConfig.offsetY;
+            let oz = weaponConfig.offsetZ;
             let spinZAngle = 0;
             let spinXAngle = 0;
             let spinYAngle = 0;
 
-            const weaponWireframe = !!readSetting("weapon_wireframe", false);
-            const weaponColorEnabled = !!readSetting("weapon_color", false);
-            const weaponRgb = !!readSetting("weapon_rainbow", false);
-            const weaponColorHex = readSetting("weapon_color_hex", "#FFFFFF") || "#FFFFFF";
+            const weaponWireframe = weaponConfig.wireframe;
+            const weaponColorEnabled = weaponConfig.colorEnabled;
+            const weaponRgb = weaponConfig.rainbow;
 
             if (weaponColorEnabled) {
               if (pendingRestoreTex === undefined) {
@@ -2180,19 +2301,11 @@ window.addEventListener("DOMContentLoaded", async () => {
               }
 
               if (weaponRgb) {
-                const [r, g, b] = hsvToRgb((now / 3000) * 360);
-                rgbPixel[0] = r;
-                rgbPixel[1] = g;
-                rgbPixel[2] = b;
-                rgbPixel[3] = 255;
+                updateRainbowPixel(now);
               } else {
-                const hex = String(weaponColorHex).replace("#", "");
-                const rVal = parseInt(hex.substring(0, 2), 16);
-                const gVal = parseInt(hex.substring(2, 4), 16);
-                const bVal = parseInt(hex.substring(4, 6), 16);
-                rgbPixel[0] = Number.isNaN(rVal) ? 255 : rVal;
-                rgbPixel[1] = Number.isNaN(gVal) ? 255 : gVal;
-                rgbPixel[2] = Number.isNaN(bVal) ? 255 : bVal;
+                rgbPixel[0] = weaponConfig.color.r;
+                rgbPixel[1] = weaponConfig.color.g;
+                rgbPixel[2] = weaponConfig.color.b;
                 rgbPixel[3] = 255;
               }
               bindColorTexture();
@@ -2203,8 +2316,8 @@ window.addEventListener("DOMContentLoaded", async () => {
             }
 
             if (inspectStart !== null && inspectingWeaponId === currentWeaponId) {
-              const animFn = weaponIdToInspectKeyframes[currentWeaponId];
-              const inspectDuration = getInspectDuration(currentWeaponId);
+              const animFn = compiledWeaponInspect;
+              const inspectDuration = compiledCustomization.inspectDuration;
               if (animFn) {
                 const elapsed = now - inspectStart;
                 const t = Math.min(elapsed / inspectDuration, 1.0);
@@ -2241,9 +2354,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             matBuf[13] += oy;
             matBuf[14] += oz;
 
-            const weaponRotX = getWeaponSetting(currentWeaponId, "rotation_x", 0);
-            const weaponRotY = getWeaponSetting(currentWeaponId, "rotation_y", 0);
-            const weaponRotZ = getWeaponSetting(currentWeaponId, "rotation_z", 0);
+            const weaponRotX = weaponConfig.rotationXRad;
+            const weaponRotY = weaponConfig.rotationYRad;
+            const weaponRotZ = weaponConfig.rotationZRad;
             if (weaponRotX !== 0 || weaponRotY !== 0 || weaponRotZ !== 0) {
               applyMappedRotation(matBuf, currentWeaponId, weaponRotX, weaponRotY, weaponRotZ);
             }
@@ -2266,7 +2379,7 @@ window.addEventListener("DOMContentLoaded", async () => {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
-            const currentWeaponId = domWeaponId || "vita";
+            const currentWeaponId = domWeaponId || compiledCustomization.weaponId || "vita";
 
             let armType = armSigToType.get(sig) || "left";
             if (sig === symmetricArmSig && currentWeaponId === "tomahawk") {
@@ -2279,18 +2392,19 @@ window.addEventListener("DOMContentLoaded", async () => {
 
             matBuf.set(slice);
 
-            let armScale = getArmSetting(currentWeaponId, armType, "size", 1.0);
-            let ox = getArmSetting(currentWeaponId, armType, "offset_x", 0);
-            let oy = getArmSetting(currentWeaponId, armType, "offset_y", 0);
-            let oz = getArmSetting(currentWeaponId, armType, "offset_z", 0);
+            const armConfig = compiledCustomization.arms[armType] || compiledCustomization.arms.left;
+            let armScale = armConfig.scale;
+            let ox = armConfig.offsetX;
+            let oy = armConfig.offsetY;
+            let oz = armConfig.offsetZ;
 
             let armSpinX = 0;
             let armSpinY = 0;
             let armSpinZ = 0;
 
             if (inspectStart !== null && inspectingWeaponId === currentWeaponId) {
-              const armFn = armKeyframeMap[`${currentWeaponId}_${armType}`] ?? null;
-              const inspectDuration = getInspectDuration(currentWeaponId);
+              const armFn = compiledArmInspect[armType];
+              const inspectDuration = compiledCustomization.inspectDuration;
               if (armFn !== null) {
                 const elapsed = now - inspectStart;
                 const t = Math.min(elapsed / inspectDuration, 1.0);
@@ -2317,9 +2431,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             matBuf[13] += oy;
             matBuf[14] += oz;
 
-            const armRotX = getArmSetting(currentWeaponId, armType, "rotation_x", 0);
-            const armRotY = getArmSetting(currentWeaponId, armType, "rotation_y", 0);
-            const armRotZ = getArmSetting(currentWeaponId, armType, "rotation_z", 0);
+            const armRotX = armConfig.rotationXRad;
+            const armRotY = armConfig.rotationYRad;
+            const armRotZ = armConfig.rotationZRad;
             if (armRotX !== 0 || armRotY !== 0 || armRotZ !== 0) {
               applyMappedRotation(matBuf, currentWeaponId, armRotX, armRotY, armRotZ);
             }
@@ -2328,10 +2442,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             if (armSpinY !== 0) applyYSpin(matBuf, armSpinY);
             if (armSpinZ !== 0) applyZSpin(matBuf, armSpinZ);
 
-            const armWireframe = !!readSetting("arm_wireframe", false);
-            const armColorEnabled = !!readSetting("arm_color", false);
-            const armRgb = !!readSetting("arm_rainbow", false);
-            const armColorHex = readSetting("arm_color_hex", "#FFFFFF") || "#FFFFFF";
+            const armWireframe = armConfig.wireframe;
+            const armColorEnabled = armConfig.colorEnabled;
+            const armRgb = armConfig.rainbow;
 
             if (armColorEnabled) {
               if (pendingRestoreTex === undefined) {
@@ -2339,19 +2452,11 @@ window.addEventListener("DOMContentLoaded", async () => {
               }
 
               if (armRgb) {
-                const [r, g, b] = hsvToRgb((now / 3000) * 360);
-                rgbPixel[0] = r;
-                rgbPixel[1] = g;
-                rgbPixel[2] = b;
-                rgbPixel[3] = 255;
+                updateRainbowPixel(now);
               } else {
-                const hex = String(armColorHex).replace("#", "");
-                const rVal = parseInt(hex.substring(0, 2), 16);
-                const gVal = parseInt(hex.substring(2, 4), 16);
-                const bVal = parseInt(hex.substring(4, 6), 16);
-                rgbPixel[0] = Number.isNaN(rVal) ? 255 : rVal;
-                rgbPixel[1] = Number.isNaN(gVal) ? 255 : gVal;
-                rgbPixel[2] = Number.isNaN(bVal) ? 255 : bVal;
+                rgbPixel[0] = armConfig.color.r;
+                rgbPixel[1] = armConfig.color.g;
+                rgbPixel[2] = armConfig.color.b;
                 rgbPixel[3] = 255;
               }
               bindColorTexture();
@@ -3012,6 +3117,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             if (!settings.lobby_ping) pingEl.remove();
             return;
           }
+          if (document.visibilityState === "hidden" && settings.suspend_cosmetics_in_background !== false) return;
           if (running) return;
           running = true;
           const region = regionEl.textContent.trim();
@@ -3118,15 +3224,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       createQuickJoin();
 
-      const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
-
       shortIdCard = document.querySelector(".avatar-info .username").textContent.trim().split("#")[1];
       localStorage.setItem("user-id", shortIdCard);
 
       const lobbyNickname = document.querySelector(".team-section .heads .nickname");
 
-      const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
-      const entry = nicknames[shortIdCard];
+      const entry = window.__dawnDataIndex.nickname(shortIdCard);
 
       if (entry?.nickname) {
         const textNode = [...lobbyNickname.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
@@ -3134,7 +3237,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
 
       const applyUserCustomizations = (window.applyUserCustomizations = () => {
-        const customs = customizations?.find((c) => c.shortId === shortIdCard);
+        const customs = window.__dawnDataIndex.customization(shortIdCard);
         if (!customs) return;
 
         if (customs.gradient) {
@@ -3196,7 +3299,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
 
       const applyClanCustomizations = (window.applyClanCustomizations = () => {
-        const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
         const clan = document.querySelector(".team-section .heads .clan-tag");
         if (!clan) return;
         if (!settings.customizations) return;
@@ -3206,7 +3308,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           .map((node) => node.textContent.trim())
           .join(" ")
           .trim();
-        const customs = clancustomizations.find((c) => c.clan === userClan);
+        const customs = window.__dawnDataIndex.clan(userClan);
         if (!customs) return;
 
         if (customs.gradient) {
@@ -3413,8 +3515,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         applyBtn.innerHTML = `APPLY`;
         applyBtn.className = "nickname-apply-btn";
 
-        const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
-        const existingEntry = nicknames[shortId];
+        const nicknames = window.__dawnDataIndex.nicknames().object;
+        const existingEntry = window.__dawnDataIndex.nickname(shortId);
         const rawUsername = profile.querySelector(".card-profile .copy-cont .value")?.textContent.trim();
         const originalName = existingEntry?.original || rawUsername?.split("#")[0].trim() || nickname.textContent.trim();
         input.placeholder = originalName;
@@ -3433,6 +3535,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         const resetNickname = () => {
           delete nicknames[shortId];
           localStorage.setItem("nicknames", JSON.stringify(nicknames));
+          window.__dawnDataIndex.invalidate(STORAGE_KEYS.nicknames);
           closeModal();
           window.location.reload();
         };
@@ -3445,6 +3548,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           }
           nicknames[shortId] = { original: originalName, nickname: newName };
           localStorage.setItem("nicknames", JSON.stringify(nicknames));
+          window.__dawnDataIndex.invalidate(STORAGE_KEYS.nicknames);
           closeModal();
           window.location.reload();
         });
@@ -3547,8 +3651,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       if (!nickname) return;
 
-      const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
-      const entry = nicknames[shortId];
+      const entry = window.__dawnDataIndex.nickname(shortId);
 
       if (entry?.nickname) {
         const textNode = [...nickname.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
@@ -3581,10 +3684,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           badgesElem.innerHTML = "";
         }
 
-        const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
-        const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
-
-        const customs = customizations.find((c) => c.shortId === shortId);
+        const customs = window.__dawnDataIndex.customization(shortId);
 
         const currentUser = JSON.parse(localStorage.getItem("current-user") || "null");
         const isOwnProfile = currentUser && currentUser.shortId === shortId;
@@ -3661,8 +3761,9 @@ window.addEventListener("DOMContentLoaded", async () => {
           }
         }
 
-        if (clancustomizations.find((c) => c.clan === userClan) && settings.customizations) {
-          const customs = clancustomizations.find((c) => c.clan === userClan);
+        const clanCustoms = window.__dawnDataIndex.clan(userClan);
+        if (clanCustoms && settings.customizations) {
+          const customs = clanCustoms;
 
           if (customs.gradient) {
             clan.style.display = "inline-block";
@@ -3732,18 +3833,31 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   observeForElement("#profile-modal-modal", handleProfile);
 
-  let cleanupInGameChat = () => {};
-  const handleInGame = () => {
-    const gameInterface = document.querySelector(".desktop-game-interface");
+  let cleanupInGameRuntime = () => {};
+  const handleInGame = (mountedInterface = null) => {
+    const gameInterface = mountedInterface || document.querySelector(".desktop-game-interface");
     if (!gameInterface || gameInterface.dataset.dawnInitialized === "true") return;
-    cleanupInGameChat();
+    cleanupInGameRuntime();
     // SPA URL events can fire repeatedly for one match. Mark the actual game
     // interface node so we do not stack duplicate observers and key listeners.
     // A new match gets a new node and initializes normally.
     gameInterface.dataset.dawnInitialized = "true";
-    const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
+    const matchRuntime = new RuntimeScope(`match:${window.location.pathname}`);
+    if (settings.suspend_cosmetics_in_background !== false && document.visibilityState === "hidden") matchRuntime.suspend();
+    window.__dawnMatchRuntime = matchRuntime;
+    cleanupInGameRuntime = () => {
+      matchRuntime.cleanup();
+      delete gameInterface.dataset.dawnInitialized;
+      if (window.__dawnMatchRuntime === matchRuntime) window.__dawnMatchRuntime = null;
+      if (cleanupInGameRuntime) cleanupInGameRuntime = () => {};
+    };
 
-    document.addEventListener(
+    const dataIndex = window.__dawnDataIndex;
+    const nicknameIndex = dataIndex.nicknames();
+    const nicknames = nicknameIndex.object;
+
+    matchRuntime.listen(
+      document,
       "keyup",
       (e) => {
         if (e.key === "8") {
@@ -3754,25 +3868,15 @@ window.addEventListener("DOMContentLoaded", async () => {
       true,
     );
 
-    let red_players = [];
-    let blue_players = [];
-    let dm_players = [];
-
     const playerCache = new Map();
 
-    const nicknameByOriginal = new Map();
-    const nicknameByNickname = new Map();
-    Object.entries(nicknames).forEach(([shortId, entry]) => {
-      if (entry.original) nicknameByOriginal.set(entry.original, { ...entry, shortId });
-      if (entry.nickname) nicknameByNickname.set(entry.nickname, { ...entry, shortId });
-    });
+    const nicknameByOriginal = nicknameIndex.byOriginal;
+    const nicknameByNickname = nicknameIndex.byNickname;
 
     const updatePlayerLists = () => {
-      red_players = [];
-      blue_players = [];
-      dm_players = [];
+      playerCache.clear();
 
-      const process = (conts, list) => {
+      const process = (conts, team) => {
         conts.forEach((player) => {
           const nicknameEl = player.querySelector(".nickname");
           const shortIdEl = player.querySelector(".short-id");
@@ -3789,10 +3893,11 @@ window.addEventListener("DOMContentLoaded", async () => {
             shortId: shortId || null,
             nickname: entry?.nickname,
             isBot: !shortId,
+            team,
           };
 
-          list.push(p);
           playerCache.set(rawName, p);
+          playerCache.set(displayName, p);
           if (shortId) {
             playerCache.set(shortId, p);
             if (entry?.nickname) playerCache.set(entry.nickname, p);
@@ -3800,22 +3905,19 @@ window.addEventListener("DOMContentLoaded", async () => {
         });
       };
 
-      process(document.querySelectorAll(".desktop-game-interface .player-left-cont .player-cont"), red_players);
-      process(document.querySelectorAll(".desktop-game-interface .player-right-cont .player-cont"), blue_players);
-      process(document.querySelectorAll(".desktop-game-interface .tab-info .player-cont"), dm_players);
+      process(document.querySelectorAll(".desktop-game-interface .player-left-cont .player-cont"), "red");
+      process(document.querySelectorAll(".desktop-game-interface .player-right-cont .player-cont"), "blue");
+      process(document.querySelectorAll(".desktop-game-interface .tab-info .player-cont"), "dm");
     };
 
     const findPlayer = (name) => {
       if (!name) return undefined;
-      const all = [...red_players, ...blue_players, ...dm_players];
-      const fromList = all.find((p) => p.display === name || p.original === name || p.nickname === name) ?? playerCache.get(name);
+      const fromList = playerCache.get(name);
       if (fromList) return fromList;
       const entry = nicknameByOriginal.get(name) ?? nicknameByNickname.get(name);
       if (entry) return { display: name, original: entry.original, shortId: entry.shortId, nickname: entry.nickname };
       return undefined;
     };
-
-    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const setDisplay = (el, text) => {
       let overlay = el.querySelector(".juice-nickname-overlay");
@@ -3853,8 +3955,8 @@ window.addEventListener("DOMContentLoaded", async () => {
           const currentText = killer.innerText.trim();
           const match = findPlayer(currentText);
           if (match) {
-            if (red_players.includes(match)) item.classList.add("red");
-            else if (blue_players.includes(match)) item.classList.add("blue");
+            if (match.team === "red") item.classList.add("red");
+            else if (match.team === "blue") item.classList.add("blue");
             if (match.nickname) setDisplay(killer, match.nickname);
           }
         }
@@ -3884,15 +3986,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const textNode = [...body.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
           if (!textNode) return;
 
-          let text = textNode.textContent;
-          Object.entries(nicknames).forEach(([shortId, entry]) => {
-            if (!entry.nickname || !entry.original) return;
-            const originalPattern = new RegExp(escapeRegex(entry.original) + "#" + shortId, "g");
-            const nicknamePattern = new RegExp(escapeRegex(entry.nickname) + "#" + shortId, "g");
-            text = text.replace(nicknamePattern, `${entry.original}#${shortId}`);
-            text = text.replace(originalPattern, `${entry.nickname}#${shortId}`);
-          });
-
+          const text = dataIndex.replaceNicknames(textNode.textContent);
           if (text !== textNode.textContent) textNode.textContent = text;
         }
         return;
@@ -3947,14 +4041,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     // callbacks that could not be disconnected.
     const observedChatContainers = new Set();
     const pendingChatMessages = new Set();
-    let chatFlushQueued = false;
-    let chatMountObserver = null;
+    let chatFlushHandle = null;
     let chatRouteListener = null;
 
     const flushChatMessages = () => {
-      chatFlushQueued = false;
+      chatFlushHandle = null;
       if (!gameInterface.isConnected) {
-        cleanupInGameChat();
+        cleanupInGameRuntime();
         return;
       }
       if (settings.customizations) {
@@ -3971,9 +4064,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     const queueChatMessage = (message) => {
       if (!message || !message.classList?.contains("message")) return;
       pendingChatMessages.add(message);
-      if (!chatFlushQueued) {
-        chatFlushQueued = true;
-        queueMicrotask(flushChatMessages);
+      if (chatFlushHandle === null) {
+        chatFlushHandle = requestAnimationFrame(flushChatMessages);
       }
     };
 
@@ -3994,40 +4086,53 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     });
 
+    const chatObserverOptions = {
+      childList: true,
+      characterData: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    };
     const observeChatContainer = (container) => {
+      let pruned = false;
+      for (const observed of observedChatContainers) {
+        if (!observed.isConnected) {
+          observedChatContainers.delete(observed);
+          pruned = true;
+        }
+      }
+      if (pruned) {
+        chatObserver.disconnect();
+        for (const observed of observedChatContainers) chatObserver.observe(observed, chatObserverOptions);
+      }
       if (!container || observedChatContainers.has(container)) return;
       observedChatContainers.add(container);
-      chatObserver.observe(container, {
-        childList: true,
-        characterData: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["class"],
-      });
+      chatObserver.observe(container, chatObserverOptions);
       container.querySelectorAll(".message").forEach(queueChatMessage);
     };
 
-    const disconnectChatObservers = () => {
+    const pauseChatObservers = () => {
       chatObserver.disconnect();
-      chatMountObserver?.disconnect();
-      observedChatContainers.clear();
       pendingChatMessages.clear();
-      chatFlushQueued = false;
-      if (chatRouteListener) window.removeEventListener("url-changed", chatRouteListener);
-      if (cleanupInGameChat === disconnectChatObservers) cleanupInGameChat = () => {};
+      if (chatFlushHandle !== null) cancelAnimationFrame(chatFlushHandle);
+      chatFlushHandle = null;
     };
-    cleanupInGameChat = disconnectChatObservers;
+    const disconnectChatObservers = () => {
+      pauseChatObservers();
+      observedChatContainers.clear();
+      if (chatRouteListener) window.removeEventListener("url-changed", chatRouteListener);
+    };
     chatRouteListener = ({ detail }) => {
       try {
         const pathname = new URL(detail, base_url).pathname;
         if (!pathname.startsWith("/games") && !pathname.startsWith("/hub/ranked")) {
-          disconnectChatObservers();
+          cleanupInGameRuntime();
         }
       } catch (error) {
-        disconnectChatObservers();
+        cleanupInGameRuntime();
       }
     };
-    window.addEventListener("url-changed", chatRouteListener);
+    matchRuntime.listen(window, "url-changed", chatRouteListener, undefined, false);
 
     const updateMessages = () => {
       document.querySelectorAll(".desktop-game-interface .messages-cont .message").forEach(processMessage);
@@ -4068,6 +4173,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (!deathCont) return;
 
       const nickname = deathCont.querySelector(".nickname");
+      if (!nickname) return;
       const textNode = [...nickname.childNodes].find((n) => n.nodeType === Node.TEXT_NODE);
       const userClan = deathCont.querySelector(".killer-clan")?.textContent.trim();
       const shortIdElem = deathCont.querySelector(".short-id");
@@ -4083,11 +4189,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       const applyCustomizations = () => {
         if (!settings.customizations) return;
 
-        const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
-        const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
-
-        const customs = customizations?.find((c) => c.shortId === shortId);
-        const clanCustoms = clancustomizations?.find((c) => c.clan === userClan);
+        const customs = dataIndex.customization(shortId);
+        const clanCustoms = dataIndex.clan(userClan);
 
         if (customs) {
           nickname.querySelector(".juice-badges")?.remove();
@@ -4107,11 +4210,13 @@ window.addEventListener("DOMContentLoaded", async () => {
             nickname.style.fontWeight = "700";
             nickname.style.textShadow = customs.gradient.shadow || "0 0 0 transparent";
 
-            shortIdElem.style.background = "none";
-            shortIdElem.style.webkitBackgroundClip = "unset";
-            shortIdElem.style.backgroundClip = "unset";
-            shortIdElem.style.color = "white";
-            shortIdElem.style.textShadow = "-1px -1px 0 #0f0f0f, 1px -1px 0 #0f0f0f, -1px 1px 0 #0f0f0f, 1px 1px 0 #0f0f0f";
+            if (shortIdElem) {
+              shortIdElem.style.background = "none";
+              shortIdElem.style.webkitBackgroundClip = "unset";
+              shortIdElem.style.backgroundClip = "unset";
+              shortIdElem.style.color = "white";
+              shortIdElem.style.textShadow = "-1px -1px 0 #0f0f0f, 1px -1px 0 #0f0f0f, -1px 1px 0 #0f0f0f, 1px 1px 0 #0f0f0f";
+            }
 
             if (settings.animations && customs.animated) {
               nickname.style.backgroundSize = "200% 200%";
@@ -4135,7 +4240,8 @@ window.addEventListener("DOMContentLoaded", async () => {
             });
           }
 
-          nickname.insertBefore(badgesElem, shortIdElem);
+          if (shortIdElem) nickname.insertBefore(badgesElem, shortIdElem);
+          else nickname.appendChild(badgesElem);
         } else {
           nickname.style = "";
           nickname.querySelector(".juice-badges")?.remove();
@@ -4161,7 +4267,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       applyCustomizations();
     };
 
-    const spectatingObservers = [];
     let updatingSpectating = false;
 
     const updateSpectating = () => {
@@ -4169,8 +4274,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       updatingSpectating = true;
 
       try {
-        spectatingObservers.forEach((o) => o.disconnect());
-
         const fpsElems = document.querySelectorAll(".infos .fps");
         fpsElems.forEach((fpsElem) => {
           const fullText = fpsElem.textContent.trim();
@@ -4188,11 +4291,6 @@ window.addEventListener("DOMContentLoaded", async () => {
               textNode.textContent = nextText;
             }
           }
-        });
-
-        const infosElems = document.querySelectorAll(".infos");
-        spectatingObservers.forEach((o) => {
-          infosElems.forEach((infosElem) => o.observe(infosElem, { characterData: true, subtree: true, childList: true }));
         });
       } finally {
         updatingSpectating = false;
@@ -4256,6 +4354,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
+    let statObserverInstalled = false;
     const createKD = () => {
       if (document.querySelector(".kill-death .kd")) document.querySelector(".kill-death .kd").remove();
       const kills = document.querySelector(".kill-death .kill");
@@ -4272,6 +4371,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       document.querySelector(".kill-death").insertBefore(kd, kills.parentElement.children[2]);
 
+      if (statObserverInstalled) return;
+      statObserverInstalled = true;
       let prevKills = parseInt(kills.textContent) || 0;
       let prevDeaths = parseInt(deaths?.textContent) || 0;
 
@@ -4295,11 +4396,17 @@ window.addEventListener("DOMContentLoaded", async () => {
         updateKD();
       };
 
-      kills.addEventListener("DOMSubtreeModified", checkReset);
-      if (deaths) deaths.addEventListener("DOMSubtreeModified", checkReset);
+      const statObserver = new MutationObserver(checkReset);
+      const observeStats = () => {
+        statObserver.observe(kills, { childList: true, characterData: true, subtree: true });
+        if (deaths) statObserver.observe(deaths, { childList: true, characterData: true, subtree: true });
+      };
+      observeStats();
+      matchRuntime.track({ suspend: () => statObserver.disconnect(), resume: observeStats, cleanup: () => statObserver.disconnect() });
     };
 
     let assistsCount = 0;
+    let assistsObserverInstalled = false;
 
     const createAssists = () => {
       if (document.querySelector(".kill-death .assists")) return;
@@ -4318,7 +4425,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       kills.parentElement.insertBefore(assists, kills.parentElement.children[3]);
 
       const achCont = document.querySelector(".ach-cont");
-      if (achCont) {
+      if (achCont && !assistsObserverInstalled) {
+        assistsObserverInstalled = true;
         let lastTriggered = 0;
 
         const observer = new MutationObserver((mutations) => {
@@ -4340,7 +4448,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           }
         });
 
-        observer.observe(achCont, {
+        matchRuntime.observe(observer, achCont, {
           subtree: true,
           attributes: true,
           attributeFilter: ["class"],
@@ -4349,6 +4457,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     let objectivesCount = 0;
+    let objectivesObserverInstalled = false;
 
     const createObjectives = () => {
       if (document.querySelector(".kill-death .objectives")) return;
@@ -4375,7 +4484,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       kills.parentElement.insertBefore(objectives, kills.parentElement.children[4]);
 
       const achCont = document.querySelector(".ach-cont");
-      if (achCont) {
+      if (achCont && !objectivesObserverInstalled) {
+        objectivesObserverInstalled = true;
         let lastTriggered = 0;
 
         const observer = new MutationObserver((mutations) => {
@@ -4397,7 +4507,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           }
         });
 
-        observer.observe(achCont, {
+        matchRuntime.observe(observer, achCont, {
           subtree: true,
           attributes: true,
           attributeFilter: ["class"],
@@ -4406,6 +4516,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     let headshotsCount = 0;
+    let headshotObserverInstalled = false;
 
     const createHeadshots = () => {
       if (document.querySelector(".kill-death .hsp")) return;
@@ -4424,7 +4535,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       kills.parentElement.insertBefore(hsp, kills.parentElement.children[5]);
 
       const killBarCont = document.querySelector(".kill-bar-cont");
-      if (killBarCont) {
+      if (killBarCont && !headshotObserverInstalled) {
+        headshotObserverInstalled = true;
         const observer = new MutationObserver((mutations) => {
           for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
@@ -4441,16 +4553,14 @@ window.addEventListener("DOMContentLoaded", async () => {
           }
         });
 
-        observer.observe(killBarCont, {
+        matchRuntime.observe(observer, killBarCont, {
           childList: true,
         });
       }
     };
 
-    const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
-    const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
-
-    if (!document.querySelector(".desktop-game-interface")) {
+    if (!gameInterface.isConnected) {
+      cleanupInGameRuntime();
       return;
     }
 
@@ -4482,7 +4592,7 @@ window.addEventListener("DOMContentLoaded", async () => {
               if (textNode && textNode.textContent !== entry.nickname) textNode.textContent = entry.nickname;
             }
 
-            const customs = customizations?.find((c) => c.shortId === shortId);
+            const customs = dataIndex.customization(shortId);
 
             if (customs) {
               let badgesElem = player.querySelector(".juice-badges");
@@ -4559,8 +4669,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
-    let escObserver = null;
-
     let applyingCustomizationsEsc = false;
     const applyCustomizationsEsc = () => {
       if (applyingCustomizationsEsc) return;
@@ -4592,7 +4700,7 @@ window.addEventListener("DOMContentLoaded", async () => {
               if (textNode && textNode.textContent !== entry.nickname) textNode.textContent = entry.nickname;
             }
 
-            const customs = customizations?.find((c) => c.shortId === shortId);
+            const customs = dataIndex.customization(shortId);
 
             if (customs) {
               let badgesElem = player.querySelector(".juice-badges");
@@ -4679,7 +4787,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             if (!clanElem) return;
             const clan = clanElem.textContent.trim();
 
-            const customs = clancustomizations?.find((c) => c.clan === clan);
+            const customs = dataIndex.clan(clan);
 
             if (customs) {
               if (customs.gradient) {
@@ -4708,12 +4816,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       } finally {
         applyingCustomizationsEsc = false;
       }
-
-      const escPlayersList = document.querySelector(".esc-interface .player-list");
-
-      if (escObserver) escObserver.disconnect();
-      escObserver = new MutationObserver(applyCustomizationsEsc);
-      if (escPlayersList) escObserver.observe(escPlayersList, { subtree: false, childList: true });
     };
 
     const indicators = [
@@ -4723,6 +4825,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       { key: "hsp_indicator", selector: ".hsp", create: createHeadshots },
     ];
 
+    const indicatorToggles = [];
     for (const { key, selector, create } of indicators) {
       const toggle = () => {
         const el = document.querySelector(`.kill-death ${selector}`);
@@ -4731,121 +4834,29 @@ window.addEventListener("DOMContentLoaded", async () => {
       };
 
       toggle();
+      indicatorToggles.push(toggle);
 
-      document.addEventListener("juice-settings-changed", ({ detail }) => {
+      matchRuntime.listen(document, "juice-settings-changed", ({ detail }) => {
         if (detail.setting === key) {
           settings[key] = detail.value;
           toggle();
         }
       });
     }
+    matchRuntime.track({ resume: () => indicatorToggles.forEach((toggle) => toggle()) });
 
-    const observers = new Map();
-    let observingShortIds = false;
-
-    const observeShortIds = () => {
-      if (observingShortIds) return;
-      observingShortIds = true;
-
-      try {
-        const tabPlayers = document.querySelectorAll(".desktop-game-interface .player-cont");
-        tabPlayers.forEach((player) => {
-          const shortIdElem = player.querySelector(".nickname");
-          if (!shortIdElem || observers.has(shortIdElem)) return;
-
-          const obs = new MutationObserver(() => {
-            observers.forEach((o) => o.disconnect());
-            applyCustomizationsTab();
-            applyCustomizationsEsc();
-            observers.forEach((o, elem) =>
-              o.observe(elem, {
-                characterData: true,
-                subtree: true,
-                childList: true,
-              }),
-            );
-          });
-
-          observers.set(shortIdElem, obs);
-          obs.observe(shortIdElem, {
-            characterData: true,
-            subtree: true,
-            childList: true,
-          });
-        });
-      } finally {
-        observingShortIds = false;
-      }
-    };
-
-    const initializedUrl = window.location.href;
-    const cleanupShortIdObservers = ({ detail: nextUrl }) => {
-      if (!nextUrl || nextUrl === initializedUrl) return;
-      observers.forEach((observer) => observer.disconnect());
-      observers.clear();
-      window.removeEventListener("url-changed", cleanupShortIdObservers);
-    };
-    window.addEventListener("url-changed", cleanupShortIdObservers);
-
-    observeShortIds();
     applyCustomizationsEsc();
-
-    if (document.querySelector(".infos")) {
-      const infosElems = document.querySelectorAll(".infos");
-      infosElems.forEach((infosElem) => {
-        const obs = new MutationObserver(() => updateSpectating());
-        spectatingObservers.push(obs);
-        obs.observe(infosElem, { characterData: true, subtree: true, childList: true });
-      });
-    } else {
-      observeForElement(".desktop-game-interface .infos", () => {
-        const infosElem = document.querySelector(".infos");
-        updateSpectating();
-        new MutationObserver(() => {
-          updateSpectating();
-        }).observe(infosElem, { characterData: true });
-      });
-    }
-
-    const playerContainer = document.querySelector(".desktop-game-interface .player-list .player-cont");
-    if (playerContainer) applyCustomizationsTab();
-
-    const playerListContainerTab = document.querySelectorAll(".desktop-game-interface .player-list");
-    playerListContainerTab.forEach((playerListContainer) => {
-      const observerTab = new MutationObserver(() => {
-        observeShortIds();
-        applyCustomizationsTab();
-        updatePlayerLists();
-      });
-      observerTab.observe(playerListContainer, { childList: true, subtree: false });
-    });
-
-    observeForElement(".esc-interface", applyCustomizationsEsc);
-    observeForElement(".death-cont .user-card", updateDeathCont);
-    observeForElement(".end-modal", updateEndModal, document.querySelector("#app"));
 
     const attachChatObserver = () => {
       observeChatContainer(document.querySelector(".desktop-game-interface .messages-cont"));
     };
 
-    const bottomLeft = document.querySelector("#bottom-left");
-    if (bottomLeft) {
-      chatMountObserver = new MutationObserver(attachChatObserver);
-      chatMountObserver.observe(bottomLeft, { childList: true });
-    }
-
-    const observeElement = (selector, setting, execute) => {
-      const elem = document.querySelector(selector);
-      if (!elem) return;
-      new MutationObserver(() => {
-        if (setting()) execute();
-      }).observe(elem, { childList: true });
-    };
-
+    let warmupTimer = document.querySelector(".warmup-timer");
+    let matchActivated = false;
     const activateMatchObservers = (afterWarmup = false) => {
+      if (matchActivated) return;
+      matchActivated = true;
       if (afterWarmup) {
-        red_players = [];
-        blue_players = [];
         assistsCount = 0;
         headshotsCount = 0;
         objectivesCount = 0;
@@ -4853,34 +4864,146 @@ window.addEventListener("DOMContentLoaded", async () => {
       updatePlayerLists();
       updateMessages();
       updateTeammates();
+      updateSpectating();
+      applyCustomizationsTab();
+      applyCustomizationsEsc();
       if (afterWarmup) {
-        applyCustomizationsTab();
         const hsp = document.querySelector(".kill-death .hsp");
         if (hsp) {
           hsp.remove();
           createHeadshots();
         }
       }
-      observeElement(".kill-bar-cont", () => settings.colored_killfeed, updateKillFeed);
-      observeElement(".teammates-list", () => settings.customizations, updateTeammates);
+      if (settings.colored_killfeed) updateKillFeed();
       attachChatObserver();
     };
 
-    const warmupTimer = document.querySelector(".warmup-timer");
-    if (!warmupTimer) {
-      activateMatchObservers();
-      return;
-    }
+    const isGeneratedMatchNode = (node) => {
+      const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+      return Boolean(element?.matches?.(".juice-badges, .juice-nickname-overlay") || element?.closest?.(".juice-badges, .juice-nickname-overlay"));
+    };
 
-    // Warm-up completion is a DOM event, not a clock. The former one-second
-    // poll could linger when a match was abandoned before warm-up ended.
-    const warmupObserver = new MutationObserver(() => {
-      if (warmupTimer.isConnected) return;
-      warmupObserver.disconnect();
-      if (gameInterface.isConnected) activateMatchObservers(true);
+    const markMutationRegions = (node, mark) => {
+      let element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+      if (isGeneratedMatchNode(element)) return;
+      while (element && element !== document.documentElement) {
+        const classes = element.classList;
+        if (
+          classes?.contains("player-list") ||
+          classes?.contains("player-left-cont") ||
+          classes?.contains("player-right-cont") ||
+          classes?.contains("tab-info")
+        ) mark("players");
+        if (classes?.contains("kill-bar-cont")) mark("killfeed");
+        if (classes?.contains("teammates-list") || classes?.contains("team-panel")) mark("teammates");
+        if (classes?.contains("infos")) mark("spectating");
+        if (classes?.contains("esc-interface")) mark("esc");
+        if (classes?.contains("death-cont")) mark("death");
+        if (classes?.contains("end-modal")) mark("end");
+        if (classes?.contains("messages-cont") || element.id === "bottom-left") mark("chatMount");
+        element = element.parentElement;
+      }
+    };
+
+    const matchBatch = createMutationBatcher({
+      MutationObserverClass: MutationObserver,
+      enqueue: (callback) => requestAnimationFrame(callback),
+      cancelEnqueue: (handle) => cancelAnimationFrame(handle),
+      onMutations: (mutations, mark) => {
+        if (!gameInterface.isConnected) {
+          cleanupInGameRuntime();
+          return;
+        }
+        for (const mutation of mutations) {
+          let changedNodeCount = 0;
+          let generatedOnly = mutation.type === "childList";
+          for (const node of mutation.addedNodes || []) {
+            changedNodeCount++;
+            if (!isGeneratedMatchNode(node)) generatedOnly = false;
+          }
+          for (const node of mutation.removedNodes || []) {
+            changedNodeCount++;
+            if (!isGeneratedMatchNode(node)) generatedOnly = false;
+          }
+          generatedOnly = generatedOnly && changedNodeCount > 0;
+          if (!generatedOnly) {
+            markMutationRegions(mutation.target, mark);
+            for (const node of mutation.addedNodes || []) markMutationRegions(node, mark);
+          }
+          if (warmupTimer && !warmupTimer.isConnected) mark("warmup");
+        }
+      },
+      onError: (error, task) => console.warn(`[Dawn] match batch ${task} failed:`, error),
     });
-    warmupObserver.observe(gameInterface, { childList: true, subtree: true });
+
+    window.__dawnMatchMutationBatch = matchBatch;
+    matchRuntime.track(() => {
+      if (window.__dawnMatchMutationBatch === matchBatch) window.__dawnMatchMutationBatch = null;
+    });
+
+    matchBatch
+      .register("players", () => {
+        updatePlayerLists();
+        applyCustomizationsTab();
+      })
+      .register("killfeed", () => { if (settings.colored_killfeed) updateKillFeed(); })
+      .register("teammates", () => { if (settings.customizations) updateTeammates(); })
+      .register("spectating", updateSpectating)
+      .register("esc", applyCustomizationsEsc)
+      .register("death", updateDeathCont)
+      .register("end", updateEndModal)
+      .register("chatMount", attachChatObserver)
+      .register("warmup", () => {
+        if (!matchActivated && (!warmupTimer || !warmupTimer.isConnected)) {
+          const hadWarmup = Boolean(warmupTimer);
+          warmupTimer = null;
+          activateMatchObservers(hadWarmup);
+        }
+      })
+      .observe(document.querySelector("#app") || gameInterface, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+    matchRuntime.track({
+      suspend: () => matchBatch.suspend(),
+      resume: () => matchBatch.resume(true),
+      cleanup: () => matchBatch.destroy(),
+    });
+    matchRuntime.track({
+      suspend: pauseChatObservers,
+      resume: () => {
+        for (const container of observedChatContainers) {
+          if (container.isConnected) chatObserver.observe(container, chatObserverOptions);
+          else observedChatContainers.delete(container);
+        }
+        attachChatObserver();
+      },
+      cleanup: disconnectChatObservers,
+    });
+
+    if (!warmupTimer) activateMatchObservers(false);
   };
+
+  // SPA route events can precede replacement of the old game interface. Watch
+  // only inserted nodes so the new match receives a fresh disposable runtime.
+  const gameInterfaceMountObserver = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node?.nodeType !== Node.ELEMENT_NODE) continue;
+        const mountedInterface = node.matches?.(".desktop-game-interface")
+          ? node
+          : node.querySelector?.(".desktop-game-interface");
+        if (mountedInterface) {
+          handleInGame(mountedInterface);
+          return;
+        }
+      }
+    }
+  });
+  const appRoot = document.querySelector("#app");
+  if (appRoot) gameInterfaceMountObserver.observe(appRoot, { childList: true, subtree: true });
 
   const handleClans = () => {
     async function fetchClan(clan) {
@@ -5050,11 +5173,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     function applyClanCustomizations() {
-      const clancustomizations = JSON.parse(localStorage.getItem("juice-clans") || "[]");
       const clans = document.querySelectorAll(".clan-name");
       clans.forEach((clan) => {
         const clanName = clan.textContent.trim();
-        const customs = clancustomizations.find((c) => c.clan === clanName);
+        const customs = window.__dawnDataIndex.clan(clanName);
         if (!customs) return;
 
         if (customs.gradient) {
@@ -5322,7 +5444,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   const handleFriends = () => {
-    const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
+    const nicknames = window.__dawnDataIndex.nicknames().object;
 
     if (!window.friends) {
       window.friends = true;
@@ -5607,11 +5729,9 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     const applyCustomizations = () => {
       if (settings.customizations) {
-        const customizations = JSON.parse(localStorage.getItem("juice-customizations") || "[]");
-
         document.querySelectorAll(".friend").forEach((friend) => {
           const shortId = friend.querySelector(".friend-id").innerText;
-          const customs = customizations?.find((c) => c.shortId === shortId);
+          const customs = window.__dawnDataIndex.customization(shortId);
           const nickname = friend.querySelector(".nickname");
 
           const entry = nicknames[shortId];
@@ -5634,6 +5754,7 @@ window.addEventListener("DOMContentLoaded", async () => {
                 entry.original = currentIngameName;
                 nicknames[shortId] = entry;
                 localStorage.setItem("nicknames", JSON.stringify(nicknames));
+                window.__dawnDataIndex.invalidate(STORAGE_KEYS.nicknames);
               }
               textNode.textContent = entry.nickname;
             }
@@ -6445,6 +6566,27 @@ window.addEventListener("DOMContentLoaded", async () => {
         window.__dawnInterpolation?.reset();
         break;
 
+      case "render_scale": {
+        const numeric = Number(value);
+        settings.render_scale = value !== "" && Number.isFinite(numeric)
+          ? Math.min(100, Math.max(70, numeric))
+          : 100;
+        window.__dawnRenderScale?.update(settings.render_scale);
+        break;
+      }
+
+      case "asset_prewarm":
+        settings.asset_prewarm = value !== false;
+        if (settings.asset_prewarm) assetPrewarmer.start();
+        else assetPrewarmer.cancel();
+        break;
+
+      case "suspend_cosmetics_in_background":
+        settings.suspend_cosmetics_in_background = value !== false;
+        if (!settings.suspend_cosmetics_in_background) resumeCosmeticWork();
+        else if (document.visibilityState === "hidden") suspendCosmeticWork();
+        break;
+
       case "interp_delay_ms":
         // Read by the dawn-patched remote playback system (live).
         window.__dawnInterpDelayMs = Number(value) || 75;
@@ -6486,6 +6628,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     console.trace = originalConsole.trace;
 
     if (window._currentUrl && window._currentUrl !== url) {
+      cleanupInGameRuntime();
       const timestamp = performance.now();
       window.__dawnSimulationClock?.reset(timestamp);
       window.__dawnInterpolation?.reset();
@@ -6521,6 +6664,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   const handleInitialLoad = () => {
     const url = window.location.href;
+    window._currentUrl = url;
     if (url === `${base_url}`) {
       handleLobby();
       handleInGame();

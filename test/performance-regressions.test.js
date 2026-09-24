@@ -19,6 +19,30 @@ test("chat processing uses one route-scoped mutation observer instead of per-mes
   assert.doesNotMatch(source, /observedMessages|observeEndMessage|observeMessage\s*=/);
 });
 
+test("match work is disposable, batched, and free of repeated storage parsing", () => {
+  const source = fs.readFileSync(path.join(root, "src/preload/game.js"), "utf8");
+  const start = source.indexOf("let cleanupInGameRuntime");
+  const end = source.indexOf("const handleClans =", start);
+  assert.ok(start >= 0 && end > start);
+  const section = source.slice(start, end);
+
+  assert.match(section, /new RuntimeScope/);
+  assert.match(section, /createMutationBatcher/);
+  assert.match(section, /matchRuntime\.track/);
+  assert.doesNotMatch(section, /document\.addEventListener\(/);
+  assert.doesNotMatch(section, /JSON\.parse\(localStorage/);
+});
+
+test("startup extras are idle-staged and rendering hot state is precompiled", () => {
+  const source = fs.readFileSync(path.join(root, "src/preload/game.js"), "utf8");
+  assert.match(source, /startupIdleQueue\.add\(editResourceSwapper\)/);
+  assert.match(source, /startupIdleQueue\.add\(initGallery\)/);
+  assert.match(source, /compileCustomizationState\(liveSettings, weaponId\)/);
+  assert.doesNotMatch(source, /getWeaponSetting|getArmSetting|getInspectDuration/);
+  assert.match(source, /installRenderScale/);
+  assert.match(source, /createAssetPrewarmer/);
+});
+
 test("warm bundle metadata survives cache pruning and revalidates in background", () => {
   const source = fs.readFileSync(path.join(root, "src/main.js"), "utf8");
   assert.match(source, /f === 'last-bundle-url\.txt'/);

@@ -314,6 +314,10 @@ const scheduleDisplaySync = (immediate = false) => {
 let _settingsSaveTimer = null;
 const _setSetting = (key, value) => {
   if (key === "fps_cap") value = Number(value) || 0;
+  if (key === "render_scale") {
+    const numeric = Number(value);
+    value = value !== "" && Number.isFinite(numeric) ? Math.min(100, Math.max(70, numeric)) : 100;
+  }
   settings[key] = value;
   if (key === "fps_cap") applyFrameCap();
   if (key === "high_refresh_auto") {
@@ -1546,6 +1550,9 @@ const _finishPerformanceBenchmark = async (benchmark) => {
       unadjustedMouse: settings.raw_mouse_input === true,
       interpolationDelayMs: Number(settings.interp_delay_ms) || 75,
       adaptiveInterpolation: settings.adaptive_interpolation !== false,
+      renderScalePercent: Number(settings.render_scale) || 100,
+      assetPrewarm: settings.asset_prewarm !== false,
+      suspendCosmeticsInBackground: settings.suspend_cosmetics_in_background !== false,
       performanceMode: settings.performance_mode !== false,
       performanceLockActive: isPerformanceLockActive(),
       thermalGuard: settings.thermal_guard !== false,
